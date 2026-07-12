@@ -1,6 +1,6 @@
 # 🌐 ConnectAbroad
 
-![ConnectAbroad Banner](banner.png)
+![ConnectAbroad Banner](connect_abroad_banner.png)
 
 ConnectAbroad is a high-end, responsive peer connection platform built for international students relocating to new countries. Designed with a warm terracotta-cream archival aesthetic, it removes relocation friction by matching students for language practice, academic cohorts, local marketplace trades, consensus-approved guides, and local hangouts.
 
