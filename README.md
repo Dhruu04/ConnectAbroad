@@ -84,7 +84,7 @@ VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ## ☁ Deploying to Netlify
 
-This project uses TanStack Start, which compiles into a static asset folder and serverless function bundle via Vinxi/Nitro.
+This project compiles into a highly optimized client bundle served as a Single Page Application (SPA).
 
 ### Build and Deploy Settings
 
@@ -92,9 +92,9 @@ When setting up your repository on Netlify, the following parameters are pre-con
 
 | Setting | Value | Description |
 | :--- | :--- | :--- |
-| **Build Command** | `npm run build` | Compiles routing trees and static bundles. |
-| **Publish Directory** | `.output/public` | Root folder for serving client-side assets. |
-| **Functions Directory** | `.output/server` | Handles edge routes and API configurations. |
+| **Build Command** | `npm run build` | Compiles routing trees and static asset bundles. |
+| **Publish Directory** | `dist/client` | Root folder for serving client-side assets and entry index file. |
+| **SPA Redirects** | `/* -> /index.html` | Fallback router mapping to prevent 404s on refresh. |
 
 1. Go to your Netlify Dashboard and click **Add new site** > **Import from Git**.
 2. Select your repository `ConnectAbroad`.
