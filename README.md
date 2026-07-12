@@ -42,7 +42,6 @@ graph TD
     C --> C2[Local prepaid SIM cards]
     D --> D1[Peer-voted Hometown Finds]
     D --> D2[Consensus-Approved Spots]
-end
 ```
 
 ---
