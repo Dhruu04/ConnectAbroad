@@ -2,6 +2,7 @@ import {
   collection, 
   doc, 
   setDoc, 
+  getDoc,
   getDocs, 
   onSnapshot, 
   updateDoc, 
@@ -83,6 +84,111 @@ export function subscribeProfiles(onUpdate: (profiles: Profile[]) => void) {
   );
 
   return unsubscribe;
+}
+
+/**
+ * Fetch a single user profile directly from Firestore.
+ */
+export async function getUserProfileFromFirebase(userId: string): Promise<Profile | null> {
+  try {
+    const docRef = doc(db, PROFILES_COLLECTION, userId);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      const homeCity = data.home_city || null;
+      const currentCity = data.current_city || null;
+      const isNative = data.is_native ?? (homeCity && currentCity && homeCity === currentCity ? true : false);
+      const relocationType = data.relocation_type || (isNative ? "native" : (data.home_country && data.current_country && data.home_country === data.current_country ? "national" : "international"));
+
+      return {
+        id: docSnap.id,
+        name: data.name || "Student Peer",
+        avatar_url: data.avatar_url || null,
+        bio: data.bio || null,
+        home_country: data.home_country || "International",
+        home_city: homeCity,
+        current_country: data.current_country || "Germany",
+        current_city: currentCity,
+        current_area: data.current_area || null,
+        university: data.university || null,
+        instagram: data.instagram || null,
+        linkedin: data.linkedin || null,
+        whatsapp: data.whatsapp || null,
+        twitter: data.twitter || null,
+        website: data.website || null,
+        is_buddy: data.is_buddy ?? false,
+        is_native: isNative,
+        relocation_type: relocationType,
+        major: data.major || null,
+        arrival_date: data.arrival_date || null,
+        favorite_dish: data.favorite_dish || null,
+        languages_spoken: data.languages_spoken || null,
+        languages_learning: data.languages_learning || null,
+        onboarded: data.onboarded ?? true,
+        study_interests: data.study_interests || null,
+        kudos_count: data.kudos_count || 0,
+        honor_title: data.honor_title || null,
+      };
+    }
+    return null;
+  } catch (err) {
+    console.error("Failed to fetch user profile from Firebase:", err);
+    return null;
+  }
+}
+
+/**
+ * Real-time listener for a single user's profile in Firebase Firestore.
+ */
+export function subscribeUserProfile(userId: string, onUpdate: (profile: Profile | null) => void) {
+  const docRef = doc(db, PROFILES_COLLECTION, userId);
+  return onSnapshot(
+    docRef,
+    (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const homeCity = data.home_city || null;
+        const currentCity = data.current_city || null;
+        const isNative = data.is_native ?? (homeCity && currentCity && homeCity === currentCity ? true : false);
+        const relocationType = data.relocation_type || (isNative ? "native" : (data.home_country && data.current_country && data.home_country === data.current_country ? "national" : "international"));
+
+        onUpdate({
+          id: docSnap.id,
+          name: data.name || "Student Peer",
+          avatar_url: data.avatar_url || null,
+          bio: data.bio || null,
+          home_country: data.home_country || "International",
+          home_city: homeCity,
+          current_country: data.current_country || "Germany",
+          current_city: currentCity,
+          current_area: data.current_area || null,
+          university: data.university || null,
+          instagram: data.instagram || null,
+          linkedin: data.linkedin || null,
+          whatsapp: data.whatsapp || null,
+          twitter: data.twitter || null,
+          website: data.website || null,
+          is_buddy: data.is_buddy ?? false,
+          is_native: isNative,
+          relocation_type: relocationType,
+          major: data.major || null,
+          arrival_date: data.arrival_date || null,
+          favorite_dish: data.favorite_dish || null,
+          languages_spoken: data.languages_spoken || null,
+          languages_learning: data.languages_learning || null,
+          onboarded: data.onboarded ?? true,
+          study_interests: data.study_interests || null,
+          kudos_count: data.kudos_count || 0,
+          honor_title: data.honor_title || null,
+        });
+      } else {
+        onUpdate(null);
+      }
+    },
+    (err) => {
+      console.warn("User profile subscription note:", err);
+    }
+  );
 }
 
 /**

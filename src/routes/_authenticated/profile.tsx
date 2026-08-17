@@ -4,8 +4,7 @@ import { toast } from "sonner";
 import { LogOut, Save, User, Globe, ArrowUpRight, Sparkles, Home, MapPin, ChefHat, Languages, GraduationCap, Upload, Trash2, AlertTriangle, Building2, ShieldCheck, MessageCircle } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
 import { COUNTRIES, codeFor } from "@/lib/countries";
-import { saveUserProfile } from "@/integrations/firebase/firestore";
-import { supabase } from "@/integrations/supabase/client";
+import { saveUserProfile, subscribeUserProfile } from "@/integrations/firebase/firestore";
 import { useAuth } from "@/lib/auth";
 import { useTranslation } from "@/lib/i18n";
 
@@ -15,7 +14,7 @@ export const Route = createFileRoute("/_authenticated/profile")({
 
 function ProfilePage() {
   const { t } = useTranslation();
-  const { user, deleteAccount } = useAuth();
+  const { user, deleteAccount, logout } = useAuth();
   const navigate = useNavigate();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -81,14 +80,11 @@ function ProfilePage() {
     reader.readAsDataURL(file);
   };
 
+  // Real-time universal cloud sync for user profile
   useEffect(() => {
     if (!user) return;
-    (async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .maybeSingle();
+
+    const unsubscribe = subscribeUserProfile(user.id, (data) => {
       if (data) {
         const isNative = data.is_native ?? (data.home_city && data.current_city && data.home_city === data.current_city ? true : false);
         const relocationType = data.relocation_type || (isNative ? "native" : (data.home_country && data.current_country && data.home_country === data.current_country ? "national" : "international"));
@@ -120,7 +116,9 @@ function ProfilePage() {
         });
       }
       setLoading(false);
-    })();
+    });
+
+    return () => unsubscribe();
   }, [user]);
 
   async function save() {
@@ -128,7 +126,6 @@ function ProfilePage() {
     setSaving(true);
     const payload = { id: user.id, ...form, onboarded: true };
 
-    await supabase.from("profiles").upsert(payload);
     await saveUserProfile(payload);
     localStorage.setItem("connect_abroad_profile", JSON.stringify(payload));
 
@@ -137,7 +134,7 @@ function ProfilePage() {
   }
 
   async function signOut() {
-    await supabase.auth.signOut();
+    await logout();
     navigate({ to: "/" });
   }
 

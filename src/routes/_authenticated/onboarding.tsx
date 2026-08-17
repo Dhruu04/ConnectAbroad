@@ -1,9 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { saveUserProfile } from "@/integrations/firebase/firestore";
+import { saveUserProfile, getUserProfileFromFirebase } from "@/integrations/firebase/firestore";
 import { COUNTRIES } from "@/lib/countries";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { TopBar } from "@/components/TopBar";
 import { Compass, Home, MapPin, Globe, Upload, Building2, ShieldCheck, Check } from "lucide-react";
@@ -66,48 +65,51 @@ function Onboarding() {
     reader.readAsDataURL(file);
   };
 
-  // Check if already onboarded
+  // Check if already onboarded in Firebase Firestore
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (data?.onboarded) {
-        navigate({ to: "/discover" });
-        return;
+      try {
+        const data = await getUserProfileFromFirebase(user.id);
+        if (data?.onboarded) {
+          navigate({ to: "/discover" });
+          return;
+        }
+        if (data) {
+          setForm((f) => ({
+            ...f,
+            name: data.name ?? f.name,
+            home_country: data.home_country ?? "",
+            home_city: data.home_city ?? "",
+            current_country: data.current_country ?? "",
+            current_city: data.current_city ?? "",
+            current_area: data.current_area ?? "",
+            university: data.university ?? "",
+            bio: data.bio ?? "",
+            avatar_url: data.avatar_url ?? "",
+            instagram: data.instagram ?? "",
+            linkedin: data.linkedin ?? "",
+            whatsapp: data.whatsapp ?? "",
+            twitter: data.twitter ?? "",
+            favorite_dish: data.favorite_dish ?? "",
+            languages_spoken: data.languages_spoken ?? "",
+            languages_learning: data.languages_learning ?? "",
+            arrival_date: data.arrival_date ?? "",
+            is_buddy: data.is_buddy ?? false,
+            is_native: data.is_native ?? false,
+            relocation_type: data.relocation_type || "international",
+            major: data.major ?? "",
+            study_interests: data.study_interests ?? "",
+          }));
+        } else if (user.user_metadata?.full_name) {
+          const fullName = user.user_metadata.full_name;
+          setForm((f) => ({ ...f, name: fullName }));
+        }
+      } catch (err) {
+        console.error("Onboarding load error:", err);
+      } finally {
+        setLoading(false);
       }
-      if (data) {
-        setForm((f) => ({
-          ...f,
-          name: data.name ?? f.name,
-          home_country: data.home_country ?? "",
-          home_city: data.home_city ?? "",
-          current_country: data.current_country ?? "",
-          current_city: data.current_city ?? "",
-          current_area: data.current_area ?? "",
-          university: data.university ?? "",
-          bio: data.bio ?? "",
-          avatar_url: data.avatar_url ?? "",
-          instagram: data.instagram ?? "",
-          linkedin: data.linkedin ?? "",
-          whatsapp: data.whatsapp ?? "",
-          twitter: data.twitter ?? "",
-          favorite_dish: data.favorite_dish ?? "",
-          languages_spoken: data.languages_spoken ?? "",
-          languages_learning: data.languages_learning ?? "",
-          arrival_date: data.arrival_date ?? "",
-          is_buddy: data.is_buddy ?? false,
-          major: data.major ?? "",
-          study_interests: data.study_interests ?? "",
-        }));
-      } else if (user.user_metadata?.full_name) {
-        const fullName = user.user_metadata.full_name;
-        setForm((f) => ({ ...f, name: fullName }));
-      }
-      setLoading(false);
     })();
   }, [user, navigate]);
 
@@ -130,7 +132,6 @@ function Onboarding() {
       name: form.name.trim(),
       onboarded: true,
     };
-    await supabase.from("profiles").upsert(payload);
     await saveUserProfile(payload);
     localStorage.setItem("connect_abroad_profile", JSON.stringify(payload));
     setSaving(false);
