@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { toast } from "sonner";
 import { 
   Calendar, 
@@ -11,19 +11,21 @@ import {
   MapPin, 
   Coffee, 
   Check, 
-  Copy, 
-  ChevronRight, 
   MessageCircle,
   Sparkles,
-  ArrowRight,
   GraduationCap,
-  Search
+  Search,
+  Map as MapIcon,
+  List
 } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
-import { BottomNav } from "@/components/BottomNav";
+import { MapView, type MapMarkerItem } from "@/components/MapView";
+import { EmptyStateCTA } from "@/components/EmptyStateCTA";
+import { useTranslation } from "@/lib/i18n";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { codeFor } from "@/lib/countries";
+import { getCoordinatesForLocation } from "@/lib/city-coordinates";
 
 export const Route = createFileRoute("/_authenticated/activities")({
   component: ActivitiesPage,
@@ -64,11 +66,13 @@ type Hangout = {
 };
 
 function ActivitiesPage() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [me, setMe] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"hangouts" | "cookoff" | "tandem" | "study">("hangouts");
+  const [viewMode, setViewMode] = useState<"list" | "map">("list");
 
   // Hangouts Tab State
   const [hangouts, setHangouts] = useState<Hangout[]>([]);
@@ -103,14 +107,16 @@ function ActivitiesPage() {
         .from("profiles")
         .select("*");
       
-      const onboarded = (allProfiles ?? []).filter((p: any) => p.onboarded);
-      setProfiles(onboarded as Profile[]);
+      const dbProfiles = (allProfiles ?? []).filter((p: any) => p.onboarded) as Profile[];
+      setProfiles(dbProfiles);
 
       // 3. Fetch Hangouts
       const { data: hangoutsData } = await supabase
         .from("hangouts")
         .select("*");
-      setHangouts(hangoutsData as Hangout[]);
+      
+      const dbHangouts = (hangoutsData ?? []) as Hangout[];
+      setHangouts(dbHangouts);
 
       setLoading(false);
     })();
@@ -216,6 +222,24 @@ function ActivitiesPage() {
     toast.success("Event exported! Open the downloaded .ics file to add it to your calendar.");
   };
 
+  const eventMapMarkers = useMemo<MapMarkerItem[]>(() => {
+    return hangouts.map((h, idx) => {
+      const baseCoords = getCoordinatesForLocation(h.current_city, null);
+      const latOffset = (((idx * 13) % 100) - 50) * 0.0010;
+      const lngOffset = (((idx * 29) % 100) - 50) * 0.0015;
+      return {
+        id: h.id,
+        name: h.title,
+        lat: baseCoords.lat + latOffset,
+        lng: baseCoords.lng + lngOffset,
+        type: "event",
+        subtitle: `${h.current_city} • ${h.date_time}`,
+        description: `${h.details} (Created by ${h.created_by_name})`,
+        actionText: "Join Event",
+      };
+    });
+  }, [hangouts]);
+
   if (loading || !me) {
     return (
       <div className="flex min-h-screen items-center justify-center text-muted-foreground bg-background animate-pulse">
@@ -319,7 +343,62 @@ function ActivitiesPage() {
     <div className="min-h-screen bg-background pb-32">
       <TopBar />
 
-      <div className="mx-auto max-w-[1300px] px-4 md:px-8 py-8 animate-scale-in">
+      <div className="mx-auto max-w-[1300px] px-4 md:px-8 py-6 space-y-6 animate-scale-in">
+        {/* Header Title */}
+        <section className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-accent">
+              {t("activities.eyebrow")}
+            </span>
+            <h1 className="font-display mt-1 text-3xl uppercase leading-none">
+              {t("activities.main_title")}
+            </h1>
+          </div>
+
+          {/* List / Map View Toggle Header */}
+          <div className="flex items-center gap-1 rounded-xl bg-surface p-1 border border-border self-start md:self-auto">
+            <button
+              onClick={() => setViewMode("list")}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all border-none cursor-pointer ${
+                viewMode === "list"
+                  ? "bg-accent text-accent-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground bg-transparent"
+              }`}
+            >
+              <List className="size-3.5" />
+              <span>{t("view.list")}</span>
+            </button>
+            <button
+              onClick={() => setViewMode("map")}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all border-none cursor-pointer ${
+                viewMode === "map"
+                  ? "bg-accent text-accent-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground bg-transparent"
+              }`}
+            >
+              <MapIcon className="size-3.5" />
+              <span>{t("view.map")}</span>
+            </button>
+          </div>
+        </section>
+
+        {viewMode === "map" ? (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-accent">
+                Events Map Pinboard
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Click map pins to view event details and RSVP
+              </span>
+            </div>
+            <MapView
+              markers={eventMapMarkers}
+              className="h-[550px] w-full rounded-3xl overflow-hidden border border-border shadow-md"
+            />
+          </div>
+        ) : (
+          <>
         {/* Header Summary */}
         <div className="mb-6">
           <div className="flex items-center gap-2">
@@ -327,12 +406,12 @@ function ActivitiesPage() {
               <Sparkles className="size-4" />
             </span>
             <span className="text-[10px] font-bold uppercase tracking-widest text-accent">
-              Connect & Socialize
+              {t("activities.sub_eyebrow")}
             </span>
           </div>
-          <h1 className="font-display mt-2 text-3xl uppercase">Social Activities</h1>
+          <h1 className="font-display mt-2 text-3xl uppercase">{t("activities.sub_title")}</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Participate in events, share homemade meals, and swap languages in {me.current_city}.
+            {t("activities.sub_desc", { city: me.current_city })}
           </p>
         </div>
 
@@ -347,7 +426,7 @@ function ActivitiesPage() {
             }`}
           >
             <Calendar className="size-4" />
-            <span>Hangouts</span>
+            <span>{t("activities.tab_hangouts")}</span>
           </button>
           
           <button
@@ -359,7 +438,7 @@ function ActivitiesPage() {
             }`}
           >
             <ChefHat className="size-4" />
-            <span>Cook-Off</span>
+            <span>{t("activities.tab_cookoff")}</span>
           </button>
 
           <button
@@ -371,7 +450,7 @@ function ActivitiesPage() {
             }`}
           >
             <Languages className="size-4" />
-            <span>Tandem</span>
+            <span>{t("activities.tab_tandem")}</span>
           </button>
 
           <button
@@ -383,7 +462,7 @@ function ActivitiesPage() {
             }`}
           >
             <GraduationCap className="size-4" />
-            <span>Study Match</span>
+            <span>{t("activities.tab_study")}</span>
           </button>
         </div>
 
@@ -396,7 +475,7 @@ function ActivitiesPage() {
               {/* Left Column: Create Form (4 Cols) */}
               <div className="md:col-span-4 bg-surface border border-border rounded-3xl p-5 space-y-4 md:sticky md:top-24">
                 <div className="flex items-center justify-between pb-2 border-b border-border">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">Host a Hangout</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">{t("activities.host_hangout")}</h3>
                   <button 
                     onClick={() => setShowCreateForm(!showCreateForm)}
                     className="md:hidden text-xs text-accent font-bold uppercase"
@@ -407,53 +486,53 @@ function ActivitiesPage() {
 
                 <div className={`${showCreateForm ? "block" : "hidden"} md:block space-y-4`}>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Miss something from back home or just want to organize a local study group, board game evening, or football match? List it here!
+                    {t("activities.hangout_subtitle")}
                   </p>
                   
                   <form onSubmit={handleCreateHangout} className="space-y-3.5">
                     <div className="space-y-1">
-                      <label className="block text-[9px] font-bold uppercase tracking-wider opacity-60 ml-1">Event Title</label>
+                      <label className="block text-[9px] font-bold uppercase tracking-wider opacity-60 ml-1">{t("activities.event_title")}</label>
                       <input 
                         required
                         type="text"
                         value={newTitle}
                         onChange={(e) => setNewTitle(e.target.value)}
-                        placeholder="e.g. Board Game Cafe Meet"
+                        placeholder={t("activities.event_title_placeholder")}
                         className="input-field"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="block text-[9px] font-bold uppercase tracking-wider opacity-60 ml-1">Details & Location</label>
+                      <label className="block text-[9px] font-bold uppercase tracking-wider opacity-60 ml-1">{t("activities.details_location")}</label>
                       <textarea
                         required
                         value={newDetails}
                         onChange={(e) => setNewDetails(e.target.value)}
-                        placeholder="What, where, and why? e.g. Meet in front of library, playing Monopoly and Chess."
+                        placeholder={t("activities.details_placeholder")}
                         rows={3}
                         className="input-field resize-none"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="block text-[9px] font-bold uppercase tracking-wider opacity-60 ml-1">Date & Time</label>
+                      <label className="block text-[9px] font-bold uppercase tracking-wider opacity-60 ml-1">{t("activities.date_time")}</label>
                       <input 
                         required
                         type="text"
                         value={newDateTime}
                         onChange={(e) => setNewDateTime(e.target.value)}
-                        placeholder="e.g. Saturday at 6:00 PM"
+                        placeholder={t("activities.date_time_placeholder")}
                         className="input-field"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="block text-[9px] font-bold uppercase tracking-wider opacity-60 ml-1">Target Group</label>
+                      <label className="block text-[9px] font-bold uppercase tracking-wider opacity-60 ml-1">{t("activities.target_group")}</label>
                       <input 
                         type="text"
                         value={newTargetGroup}
                         onChange={(e) => setNewTargetGroup(e.target.value)}
-                        placeholder="e.g. Everyone in Berlin, Cricket Fans"
+                        placeholder={t("activities.target_group_placeholder")}
                         className="input-field"
                       />
                     </div>
@@ -462,7 +541,7 @@ function ActivitiesPage() {
                       type="submit"
                       className="w-full mt-2 flex items-center justify-center gap-1.5 rounded-xl bg-foreground text-background py-3.5 text-xs font-bold uppercase tracking-wider hover:opacity-90 active:scale-95 transition-all cursor-pointer"
                     >
-                      <Plus className="size-4" /> Create Hangout
+                      <Plus className="size-4" /> {t("activities.create_event_btn")}
                     </button>
                   </form>
                 </div>
@@ -478,27 +557,25 @@ function ActivitiesPage() {
               <div className="md:col-span-8 space-y-6">
                 <div className="flex items-center justify-between">
                   <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                    Hangouts in {me.current_city} ({localHangouts.length})
+                    {t("activities.hangouts_in_city", { city: me.current_city, count: localHangouts.length })}
                   </h2>
                   <span className="text-[10px] font-bold uppercase tracking-wider bg-accent-soft text-accent px-2 py-0.5 rounded-md border border-accent/10">
-                    Local Only
+                    {t("activities.local_only")}
                   </span>
                 </div>
 
                 {localHangouts.length === 0 ? (
-                  <div className="rounded-3xl border border-border bg-surface p-12 text-center flex flex-col items-center">
-                    <Calendar className="size-10 text-accent/30 mb-3" />
-                    <h3 className="text-xs font-bold uppercase tracking-wider">No active hangouts</h3>
-                    <p className="text-xs text-muted-foreground mt-1 max-w-[34ch] leading-relaxed">
-                      Be the spark! Host a study session, weekend hike, or hometown culinary hangout to meet others.
-                    </p>
-                    <button
-                      onClick={() => setShowCreateForm(true)}
-                      className="md:hidden mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-foreground text-background text-xs font-bold uppercase tracking-wider"
-                    >
-                      <Plus className="size-3.5" /> Create Hangout
-                    </button>
-                  </div>
+                  <EmptyStateCTA
+                    icon={Calendar}
+                    title="No events scheduled yet"
+                    description="No upcoming events or hangouts scheduled in your city yet. Be the first to host a meetup, cook-off, or study circle!"
+                    badge="Community Meetups"
+                    primaryAction={{
+                      label: "Host First Event",
+                      icon: Plus,
+                      onClick: () => setShowCreateForm(true),
+                    }}
+                  />
                 ) : (
                   <div className="space-y-4">
                     {localHangouts.map((h) => {
@@ -1015,11 +1092,11 @@ function ActivitiesPage() {
               </div>
             </>
           )}
-
         </div>
-      </div>
+      </>
+    )}
 
-      <BottomNav />
+      </div>
     </div>
   );
 }

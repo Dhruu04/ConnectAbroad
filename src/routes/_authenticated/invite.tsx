@@ -1,34 +1,77 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Copy, Share2, Award, Users, Globe, MapPin } from "lucide-react";
+import { Copy, Share2, Award, Users, MapPin } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
-import { BottomNav } from "@/components/BottomNav";
 import { QrCode } from "@/components/QrCode";
+import { useTranslation } from "@/lib/i18n";
+import { subscribeProfiles } from "@/integrations/firebase/firestore";
+import type { Profile } from "@/routes/_authenticated/discover";
 
 export const Route = createFileRoute("/_authenticated/invite")({
   component: Invite,
 });
 
 function Invite() {
+  const { t } = useTranslation();
   const [origin, setOrigin] = useState("");
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [loadingStats, setLoadingStats] = useState(true);
+
   useEffect(() => {
     if (typeof window !== "undefined") setOrigin(window.location.origin);
+
+    // Real-time Cloud Synchronization via Firebase Firestore
+    const unsubscribe = subscribeProfiles((cloudProfiles) => {
+      setProfiles(cloudProfiles);
+      setLoadingStats(false);
+    });
+
+    return () => unsubscribe();
   }, []);
+
   const url = origin ? `${origin}/discover` : "";
+
+  // Real Dynamic Community Statistics calculated live from Firebase Firestore
+  const totalMembers = profiles.length;
+  const nationsCount = useMemo(
+    () => Array.from(new Set(profiles.map((p) => p.home_country).filter(Boolean))).length,
+    [profiles]
+  );
+
+  const destinationClusters = useMemo(() => {
+    if (profiles.length === 0) return [];
+    const cityCounts: Record<string, number> = {};
+    profiles.forEach((p) => {
+      const city = p.current_city || p.current_country || "Germany";
+      cityCounts[city] = (cityCounts[city] || 0) + 1;
+    });
+
+    return Object.entries(cityCounts)
+      .map(([city, count]) => ({
+        city,
+        count,
+        percentage: Math.round((count / profiles.length) * 100),
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [profiles]);
 
   async function copy() {
     if (!url) return;
     await navigator.clipboard.writeText(url);
-    toast.success("Link copied");
+    toast.success("Link copied to clipboard!");
   }
+
   async function share() {
     if (!url) return;
-    if (navigator.share)
+    if (navigator.share) {
       await navigator
         .share({ title: "Join me on ConnectAbroad", text: "Find your hometown abroad.", url })
         .catch(() => {});
-    else copy();
+    } else {
+      copy();
+    }
   }
 
   return (
@@ -39,13 +82,13 @@ function Invite() {
         {/* Header Summary */}
         <div className="mb-8">
           <span className="text-[10px] font-bold uppercase tracking-widest text-accent">
-            Bring your people
+            {t("invite.eyebrow")}
           </span>
           <h1 className="font-display mt-2 text-3xl md:text-4xl uppercase leading-none">
-            Every QR scan = one less lonely student.
+            {t("invite.title")}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Share this link in your university group chat, dorm WhatsApp, or hometown community.
+            {t("invite.subtitle")}
           </p>
         </div>
 
@@ -55,8 +98,8 @@ function Invite() {
           <div className="md:col-span-5 bg-accent-soft/40 p-1 rounded-3xl border border-border">
             <div className="flex flex-col items-center gap-6 rounded-3xl bg-surface p-6 md:p-8 shadow-sm transition-all duration-300 hover:shadow-md">
               <div className="text-center">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-accent">Invite QR Code</span>
-                <h2 className="mt-1 text-xl font-semibold">Scan to join</h2>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-accent">{t("invite.qr_label")}</span>
+                <h2 className="mt-1 text-xl font-semibold">{t("invite.scan_to_join")}</h2>
               </div>
               <div className="rounded-2xl bg-accent-soft p-5 shadow-inner transition-transform duration-300 hover:scale-105">
                 {url ? <QrCode value={url} size={200} /> : <div className="size-52 animate-pulse bg-accent-soft/50 rounded-2xl" />}
@@ -68,103 +111,104 @@ function Invite() {
               )}
               <div className="flex w-full gap-3">
                 <button
+                  type="button"
                   onClick={copy}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-full border border-border bg-surface py-3 text-sm font-medium hover:bg-accent-soft/30 hover:border-accent/40 active:scale-[0.97] transition-all duration-300"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-full border border-border bg-surface py-3 text-sm font-medium hover:bg-accent-soft/30 hover:border-accent/40 active:scale-[0.97] transition-all duration-300 cursor-pointer"
                 >
-                  <Copy className="size-4" /> Copy
+                  <Copy className="size-4" /> {t("invite.copy")}
                 </button>
                 <button
+                  type="button"
                   onClick={share}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-full bg-foreground py-3 text-sm font-medium text-background hover:opacity-90 active:scale-[0.97] transition-all duration-300"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-full bg-foreground py-3 text-sm font-medium text-background hover:opacity-90 active:scale-[0.97] transition-all duration-300 cursor-pointer"
                 >
-                  <Share2 className="size-4" /> Share
+                  <Share2 className="size-4" /> {t("invite.share")}
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Right Column: Statistics & Share Guide (7 cols) */}
+          {/* Right Column: Dynamic Real Statistics & Share Guide (7 cols) */}
           <div className="md:col-span-7 space-y-6">
             {/* Community Stats Card */}
             <div className="rounded-3xl border border-border bg-surface p-6 md:p-8 shadow-sm space-y-6">
-              <h3 className="font-semibold text-lg text-foreground flex items-center gap-2 border-b border-border pb-3">
-                <Users className="size-5 text-accent" /> Community Statistics
-              </h3>
+              <div className="flex items-center justify-between border-b border-border pb-3">
+                <h3 className="font-semibold text-lg text-foreground flex items-center gap-2">
+                  <Users className="size-5 text-accent" /> {t("invite.community_stats")}
+                </h3>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-accent bg-accent-soft/40 px-2 py-0.5 rounded-full border border-accent/20">
+                  Live Cloud Data
+                </span>
+              </div>
               
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 rounded-2xl bg-background border border-border/60">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Active Members</p>
-                  <p className="text-2xl font-display uppercase text-accent mt-1">154 Students</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("invite.active_members")}</p>
+                  <p className="text-2xl font-display uppercase text-accent mt-1">
+                    {loadingStats ? "..." : `${totalMembers} ${totalMembers === 1 ? "Student" : "Students"}`}
+                  </p>
                 </div>
                 <div className="p-4 rounded-2xl bg-background border border-border/60">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Countries Represented</p>
-                  <p className="text-2xl font-display uppercase text-accent mt-1">28 Nations</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("invite.countries")}</p>
+                  <p className="text-2xl font-display uppercase text-accent mt-1">
+                    {loadingStats ? "..." : `${nationsCount} ${nationsCount === 1 ? "Nation" : "Nations"}`}
+                  </p>
                 </div>
               </div>
 
               <div className="space-y-3 pt-2">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Top Destination Clusters</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("invite.destination_clusters")}</p>
                 
-                {/* Stat row 1 */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-xs font-semibold">
-                    <span className="flex items-center gap-1.5"><MapPin className="size-3.5 text-accent" /> Berlin, Germany</span>
-                    <span className="text-muted-foreground">56% of users</span>
+                {loadingStats ? (
+                  <p className="text-xs text-muted-foreground animate-pulse py-2">Loading live city statistics...</p>
+                ) : destinationClusters.length === 0 ? (
+                  <div className="p-4 rounded-2xl bg-background border border-dashed border-border text-center">
+                    <p className="text-xs text-muted-foreground font-medium">No registered students yet — be the first to register!</p>
                   </div>
-                  <div className="h-2 w-full bg-accent-soft rounded-full overflow-hidden">
-                    <div className="h-full bg-accent rounded-full" style={{ width: "56%" }} />
-                  </div>
-                </div>
-
-                {/* Stat row 2 */}
-                <div className="space-y-1 pt-1.5">
-                  <div className="flex justify-between text-xs font-semibold">
-                    <span className="flex items-center gap-1.5"><MapPin className="size-3.5 text-accent" /> Munich, Germany</span>
-                    <span className="text-muted-foreground">32% of users</span>
-                  </div>
-                  <div className="h-2 w-full bg-accent-soft rounded-full overflow-hidden">
-                    <div className="h-full bg-accent rounded-full" style={{ width: "32%" }} />
-                  </div>
-                </div>
-
-                {/* Stat row 3 */}
-                <div className="space-y-1 pt-1.5">
-                  <div className="flex justify-between text-xs font-semibold">
-                    <span className="flex items-center gap-1.5"><MapPin className="size-3.5 text-accent" /> Hamburg, Germany</span>
-                    <span className="text-muted-foreground">12% of users</span>
-                  </div>
-                  <div className="h-2 w-full bg-accent-soft rounded-full overflow-hidden">
-                    <div className="h-full bg-accent rounded-full" style={{ width: "12%" }} />
-                  </div>
-                </div>
+                ) : (
+                  destinationClusters.map((cluster) => (
+                    <div key={cluster.city} className="space-y-1 pt-1">
+                      <div className="flex justify-between text-xs font-semibold">
+                        <span className="flex items-center gap-1.5">
+                          <MapPin className="size-3.5 text-accent" /> {cluster.city}
+                        </span>
+                        <span className="text-muted-foreground">{cluster.percentage}% of users ({cluster.count})</span>
+                      </div>
+                      <div className="h-2 w-full bg-accent-soft rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-accent rounded-full transition-all duration-500"
+                          style={{ width: `${Math.max(5, cluster.percentage)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
             {/* Where to Share Quick Guide */}
             <div className="rounded-3xl border border-border bg-surface p-6 md:p-8 shadow-sm space-y-4">
               <h3 className="font-semibold text-base text-foreground flex items-center gap-2 border-b border-border pb-3">
-                <Award className="size-5 text-accent" /> Tips to Grow the Ecosystem
+                <Award className="size-5 text-accent" /> {t("invite.tips_title")}
               </h3>
               <ul className="space-y-3 text-xs leading-relaxed text-muted-foreground">
-                <li className="flex items-start gap-2.5">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent font-bold text-[10px]">1</span>
+                <li className="flex gap-2">
+                  <span className="font-bold text-accent">1.</span>
                   <span><strong>WhatsApp & WeChat Groups:</strong> Drop the invite link in your university group chat, dorm floor groups, or regional student society circles.</span>
                 </li>
-                <li className="flex items-start gap-2.5">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent font-bold text-[10px]">2</span>
-                  <span><strong>Instagram Direct Message:</strong> Send the link directly to incoming freshmen or peers looking for familiar faces from home.</span>
+                <li className="flex gap-2">
+                  <span className="font-bold text-accent">2.</span>
+                  <span><strong>Campus Welcome Days:</strong> Print or screenshot the QR code for freshmen orientation week.</span>
                 </li>
-                <li className="flex items-start gap-2.5">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent font-bold text-[10px]">3</span>
-                  <span><strong>Discord & Slack Servers:</strong> Share it in the regional channels of your college's Discord/Slack communities.</span>
+                <li className="flex gap-2">
+                  <span className="font-bold text-accent">3.</span>
+                  <span><strong>Local Grocery & Specialty Stores:</strong> Pin a flyer near community bulletin boards at local hometown markets.</span>
                 </li>
               </ul>
             </div>
           </div>
         </div>
       </div>
-
-      <BottomNav />
     </div>
   );
 }

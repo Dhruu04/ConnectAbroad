@@ -62,6 +62,15 @@ export const COUNTRIES: { code: string; name: string }[] = [
 
 export function codeFor(name?: string | null): string {
   if (!name) return "GL";
-  const found = COUNTRIES.find((c) => c.name.toLowerCase() === name.toLowerCase());
-  return found?.code ?? "GL";
+  const trimmed = name.trim();
+  const exact = COUNTRIES.find((c) => c.name.toLowerCase() === trimmed.toLowerCase());
+  if (exact) return exact.code;
+
+  // Partial match: e.g. "Ahmadabad, Gujarat, India" matches "India" -> "IN"
+  const partial = COUNTRIES.find((c) => trimmed.toLowerCase().includes(c.name.toLowerCase()));
+  if (partial) return partial.code;
+
+  // Fallback to first 2 letters or "GL"
+  const clean = trimmed.replace(/[^a-zA-Z]/g, "");
+  return clean.length >= 2 ? clean.slice(0, 2).toUpperCase() : "GL";
 }

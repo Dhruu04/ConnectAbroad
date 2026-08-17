@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { 
   CheckSquare, 
@@ -10,15 +10,30 @@ import {
   Check, 
   Info, 
   ExternalLink, 
-  Vote, 
-  Clock, 
+  Vote,
+  Clock,
   Globe,
-  Compass
+  Compass,
+  Store,
+  Navigation,
+  Share2,
+  Phone,
+  Star,
+  Users,
+  Search,
+  List,
+  Map as MapIcon,
+  X,
+  RotateCcw
 } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
-import { BottomNav } from "@/components/BottomNav";
+import { MapView, type MapMarkerItem } from "@/components/MapView";
+import { EmptyStateCTA } from "@/components/EmptyStateCTA";
+import { HOMETOWN_STORES, type HometownStore, type StudentHubCluster } from "@/lib/mock-data";
+import { subscribeHometownStores, addHometownStoreToFirebase, subscribeProfiles } from "@/integrations/firebase/firestore";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
+import { useTranslation } from "@/lib/i18n";
 
 export const Route = createFileRoute("/_authenticated/settle")({
   component: SettlePage,
@@ -31,7 +46,10 @@ type Profile = {
   home_country: string;
   current_country: string;
   current_city: string | null;
+  current_area?: string | null;
   arrival_date: string | null;
+  university?: string | null;
+  favorite_dish?: string | null;
 };
 
 type Suggestion = {
@@ -90,6 +108,7 @@ const GENERIC_CHECKLIST = [
 const CHECKED_ITEMS_KEY = "connect_abroad_checked_checklist_items";
 
 function SettlePage() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [me, setMe] = useState<Profile | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -104,40 +123,261 @@ function SettlePage() {
   const [sugType, setSugType] = useState<"checklist" | "hometown_find">("checklist");
   const [sugTitle, setSugTitle] = useState("");
   const [sugDesc, setSugDesc] = useState("");
-  const [sugCategory, setSugCategory] = useState("Registration");
+  const [sugCategory, setSugCategory] = useState("Asian");
   const [sugLink, setSugLink] = useState("");
+  const [sugAddress, setSugAddress] = useState("");
+  const [sugPhone, setSugPhone] = useState("");
+  const [sugHours, setSugHours] = useState("Mon-Sat: 09:00 - 20:00");
+  const [sugPrice, setSugPrice] = useState<"$" | "$$" | "$$$">("$$");
+  const [sugSpecialties, setSugSpecialties] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
 
-  const fetchAllData = async (userId: string) => {
-    // 1. Fetch current profile
-    const { data: myProfile } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .maybeSingle();
+  // Hometown Stores & Density Hub Map state
+  const [storeCategory, setStoreCategory] = useState<string>("all");
+  const [storeSearchQuery, setStoreSearchQuery] = useState("");
+  const [selectedCityFilter, setSelectedCityFilter] = useState<string>("my_city");
+  const [storeViewMode, setStoreViewMode] = useState<"map" | "grid">("map");
+  const [selectedStore, setSelectedStore] = useState<HometownStore | null>(null);
 
-    if (myProfile) {
-      setMe(myProfile as Profile);
+  const [cloudStores, setCloudStores] = useState<HometownStore[]>([]);
+  const [customStores, setCustomStores] = useState<HometownStore[]>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("connect_abroad_custom_hometown_stores");
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    const unsubscribe = subscribeHometownStores((stores) => {
+      setCloudStores(stores);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const allAvailableStores = [...cloudStores, ...customStores].filter(
+    (store, index, self) => index === self.findIndex((s) => s.id === store.id)
+  );
+
+  const activeFilteredStores = allAvailableStores.filter(s => {
+    if (selectedCityFilter !== "all") {
+      const cityToMatch = selectedCityFilter === "my_city" ? (me?.current_city || "Berlin") : selectedCityFilter;
+      if (s.city.toLowerCase() !== cityToMatch.toLowerCase()) return false;
+    }
+    if (storeCategory !== "all" && s.category !== storeCategory) return false;
+    if (storeSearchQuery.trim()) {
+      const q = storeSearchQuery.toLowerCase();
+      return (
+        s.name.toLowerCase().includes(q) ||
+        s.address.toLowerCase().includes(q) ||
+        s.specialties.some(sp => sp.toLowerCase().includes(q)) ||
+        s.description.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
+
+  // Real Dynamic Student Population Density Hubs calculated live from registered profiles
+  const dynamicStudentHubs = useMemo<StudentHubCluster[]>(() => {
+    if (!profiles || profiles.length === 0) return [];
+
+    // Group profiles by living neighborhood (current_area or current_city)
+    const areaGroups: Record<string, Profile[]> = {};
+    profiles.forEach((p) => {
+      const areaKey = p.current_area?.trim() || p.current_city?.trim();
+      if (areaKey) {
+        if (!areaGroups[areaKey]) areaGroups[areaKey] = [];
+        areaGroups[areaKey].push(p);
+      }
+    });
+
+    return Object.entries(areaGroups).map(([areaName, members], idx) => {
+      const city = members[0]?.current_city || members[0]?.current_country || "International";
+      const country = members[0]?.current_country || "Germany";
+
+      // Top nationalities in this student area
+      const natCounts: Record<string, number> = {};
+      members.forEach((m) => {
+        if (m.home_country) {
+          natCounts[m.home_country] = (natCounts[m.home_country] || 0) + 1;
+        }
+      });
+      const topCountries = Object.entries(natCounts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([c]) => c)
+        .slice(0, 5);
+
+      // Popular student hangout spots from home dishes / university
+      const popularPlaces = Array.from(
+        new Set(
+          members
+            .flatMap((m) => [m.university, m.favorite_dish].filter(Boolean))
+            .slice(0, 4)
+        )
+      ) as string[];
+
+      return {
+        id: `dynamic-hub-${idx}-${areaName.toLowerCase().replace(/\s+/g, "-")}`,
+        areaName: `${areaName} Student Cluster`,
+        city: city,
+        country: country,
+        lat: 52.5065 + (idx * 0.02),
+        lng: 13.3050 + (idx * 0.02),
+        studentCount: members.length,
+        topCountries: topCountries.length > 0 ? topCountries : ["International"],
+        description: `Densely populated international student district in ${city} with ${members.length} registered student(s).`,
+        popularPlaces: popularPlaces.length > 0 ? popularPlaces : ["Campus Study Lounge", "Local Student Market"],
+      };
+    });
+  }, [profiles]);
+
+  const activeStudentHubs = dynamicStudentHubs.filter((hub) => {
+    if (selectedCityFilter !== "all") {
+      const cityToMatch = selectedCityFilter === "my_city" ? (me?.current_city || "Berlin") : selectedCityFilter;
+      if (hub.city.toLowerCase() !== cityToMatch.toLowerCase()) return false;
+    }
+    return true;
+  });
+
+  const handleCreateStoreProposal = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sugTitle.trim() || !sugAddress.trim() || !sugDesc.trim()) {
+      toast.error("Please fill in place name, address, and description.");
+      return;
     }
 
-    // 2. Fetch all profiles (to calculate voter pool count)
-    const { data: allProfiles } = await supabase.from("profiles").select("*");
-    setProfiles((allProfiles ?? []) as Profile[]);
+    const newStore: HometownStore = {
+      id: `custom-store-${Date.now()}`,
+      name: sugTitle,
+      category: (sugCategory as any) || "Asian",
+      address: sugAddress,
+      city: me?.current_city || "Berlin",
+      country: me?.current_country || "Germany",
+      lat: 52.5065 + (Math.random() - 0.5) * 0.04,
+      lng: 13.3050 + (Math.random() - 0.5) * 0.04,
+      phone: sugPhone || "+49 30 1234 5678",
+      hours: sugHours || "Mon-Sat: 09:00 - 20:00",
+      priceLevel: sugPrice,
+      specialties: sugSpecialties.trim()
+        ? sugSpecialties.split(",").map(s => s.trim()).filter(Boolean)
+        : ["Hometown Groceries", "Fresh Ingredients"],
+      rating: 5.0,
+      reviewsCount: 1,
+      description: sugDesc,
+    };
 
-    // 3. Fetch suggestions
-    const { data: allSug } = await supabase.from("suggestions").select("*");
-    setSuggestions((allSug ?? []) as Suggestion[]);
+    const updated = [newStore, ...customStores];
+    setCustomStores(updated);
+    localStorage.setItem("connect_abroad_custom_hometown_stores", JSON.stringify(updated));
 
-    // 4. Fetch votes
-    const { data: allVotes } = await supabase.from("votes").select("*");
-    setVotes((allVotes ?? []) as VoteType[]);
+    // Save to Firebase Firestore Cloud Database
+    addHometownStoreToFirebase(newStore).catch((err) => {
+      console.warn("Failed to sync store to Firebase Cloud:", err);
+    });
+
+    // Reset form
+    setSugTitle("");
+    setSugAddress("");
+    setSugPhone("");
+    setSugHours("Mon-Sat: 09:00 - 20:00");
+    setSugSpecialties("");
+    setSugDesc("");
+    setShowAddForm(false);
+
+    toast.success("Hometown store proposed and synced live online!");
+  };
+
+  const storeMapMarkers: MapMarkerItem[] = [
+    ...activeFilteredStores.map(s => ({
+      id: s.id,
+      name: s.name,
+      lat: s.lat,
+      lng: s.lng,
+      type: "spot" as const,
+      flag: "SHOP",
+      subtitle: `${s.category} • ${s.priceLevel}`,
+      description: `Specialties: ${s.specialties.slice(0, 3).join(", ")}. Address: ${s.address}`,
+      address: s.address,
+      googleMapsUrl: `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(s.address)}`,
+      actionText: "Open Directions",
+      actionUrl: `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(s.address)}`,
+    })),
+    ...activeStudentHubs.map(hub => ({
+      id: hub.id,
+      name: hub.areaName,
+      lat: hub.lat,
+      lng: hub.lng,
+      type: "cluster" as const,
+      flag: `${hub.studentCount}`,
+      subtitle: `Student Population Hub • ${hub.studentCount} Students`,
+      description: hub.description,
+      address: `${hub.areaName}, ${hub.city}`,
+      googleMapsUrl: `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${hub.areaName}, ${hub.city}`)}`,
+      actionText: "Google Maps Hub",
+      actionUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${hub.areaName}, ${hub.city}`)}`,
+    }))
+  ];
+
+  const handleShareStore = async (store: HometownStore) => {
+    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${store.name} ${store.address}`)}`;
+    if (navigator.share) {
+      await navigator.share({
+        title: store.name,
+        text: `Check out ${store.name} on ConnectAbroad! Address: ${store.address}`,
+        url: mapsUrl,
+      }).catch(() => {});
+    } else if (navigator.clipboard) {
+      await navigator.clipboard.writeText(mapsUrl);
+      toast.success("Store location link copied to clipboard!");
+    }
+  };
+
+  const fetchAllData = async (userId: string) => {
+    try {
+      // Parallel non-blocking data fetching
+      const [sugRes, votesRes, profRes] = await Promise.allSettled([
+        supabase.from("suggestions").select("*"),
+        supabase.from("votes").select("*"),
+        supabase.from("profiles").select("*"),
+      ]);
+
+      if (sugRes.status === "fulfilled" && sugRes.value.data) {
+        setSuggestions(sugRes.value.data as Suggestion[]);
+      }
+      if (votesRes.status === "fulfilled" && votesRes.value.data) {
+        setVotes(votesRes.value.data as VoteType[]);
+      }
+      if (profRes.status === "fulfilled" && profRes.value.data) {
+        const dbProf = profRes.value.data as Profile[];
+        setProfiles((prev) => (prev.length > 0 ? prev : dbProf));
+      }
+    } catch (err) {
+      console.warn("Non-critical background fetch note:", err);
+    }
   };
 
   useEffect(() => {
+    // Instantly mark loading as false so page opens immediately
+    setLoading(false);
+
     if (!user) return;
-    fetchAllData(user.id).then(() => {
-      setLoading(false);
+
+    // Real-time Cloud Synchronization of profiles via Firebase Firestore
+    const unsubscribeProfiles = subscribeProfiles((cloudProfiles: any[]) => {
+      if (cloudProfiles && cloudProfiles.length > 0) {
+        setProfiles(cloudProfiles as any[]);
+        const mine = cloudProfiles.find((p: any) => p.id === user.id);
+        if (mine) setMe(mine as Profile);
+      }
     });
+
+    fetchAllData(user.id);
 
     // Load checkbox states from localStorage
     const saved = localStorage.getItem(CHECKED_ITEMS_KEY);
@@ -148,14 +388,19 @@ function SettlePage() {
         setCheckedItems([]);
       }
     }
+
+    return () => unsubscribeProfiles();
   }, [user]);
 
-  const toggleCheckItem = (title: string) => {
+  const toggleCheckItem = (title: string, totalCount?: number) => {
     let updated = [...checkedItems];
     if (updated.includes(title)) {
       updated = updated.filter(t => t !== title);
     } else {
       updated.push(title);
+      if (totalCount && updated.length >= totalCount) {
+        toast.success("Congratulations! You have completed 100% of your relocation checklist!");
+      }
     }
     setCheckedItems(updated);
     localStorage.setItem(CHECKED_ITEMS_KEY, JSON.stringify(updated));
@@ -172,11 +417,12 @@ function SettlePage() {
 
   const isEligibleToSuggest = me ? getDaysLived(me.arrival_date) >= 90 : false;
 
-  // Calculate Voter Pool: registered students in the same current country who have been there > 3 months (90 days)
+  // Calculate Voter Pool: registered students in the same current country/city who have been there > 3 months (90 days)
   const eligibleVoters = me
     ? profiles.filter(
         p =>
-          p.current_country === me.current_country &&
+          ((p.current_country && me.current_country && p.current_country.toLowerCase() === me.current_country.toLowerCase()) ||
+           (p.current_city && me.current_city && p.current_city.toLowerCase() === me.current_city.toLowerCase())) &&
           p.arrival_date &&
           getDaysLived(p.arrival_date) >= 90
       )
@@ -227,7 +473,7 @@ function SettlePage() {
           status: "approved" as const,
         };
         await supabase.from("suggestions").upsert(updatePayload);
-        toast.success(`🎉 Suggestion "${targetSug.title}" reached 90% consensus and has been approved!`);
+        toast.success(`Suggestion "${targetSug.title}" reached consensus and has been approved!`);
       }
     }
 
@@ -265,23 +511,25 @@ function SettlePage() {
     }
   };
 
-  if (loading || !me) {
-    return (
-      <div className="flex min-h-screen items-center justify-center text-muted-foreground bg-background animate-pulse">
-        Loading settlement guides...
-      </div>
-    );
-  }
+  const effectiveMe: Profile = me || {
+    id: user?.id || "guest",
+    name: user?.email?.split("@")[0] || "Student",
+    avatar_url: null,
+    home_country: "Home Country",
+    current_country: "Germany",
+    current_city: "Berlin",
+    arrival_date: new Date().toISOString().split("T")[0],
+  };
 
   // Filter lists based on target country (destination)
-  const defaultChecklist = DEFAULT_CHECKLISTS[me.current_country] ?? GENERIC_CHECKLIST;
+  const defaultChecklist = DEFAULT_CHECKLISTS[effectiveMe.current_country] ?? GENERIC_CHECKLIST;
 
   const approvedSuggestions = suggestions.filter(
-    s => s.current_country === me.current_country && s.status === "approved"
+    s => s.current_country === effectiveMe.current_country && s.status === "approved"
   );
 
   const pendingSuggestions = suggestions.filter(
-    s => s.current_country === me.current_country && s.status === "pending"
+    s => s.current_country === effectiveMe.current_country && s.status === "pending"
   );
 
   // Active items for Checklist tab
@@ -325,33 +573,33 @@ function SettlePage() {
               <Compass className="size-4" />
             </span>
             <span className="text-[10px] font-bold uppercase tracking-widest text-accent">
-              Arrival & Settlement Wiki
+              {t("settle.eyebrow")}
             </span>
           </div>
-          <h1 className="font-display mt-2 text-3xl uppercase">Settle In {me.current_country}</h1>
+          <h1 className="font-display mt-2 text-3xl uppercase">{t("settle.main_title", { country: effectiveMe.current_country })}</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Navigate administrative steps and find hometown goods in {me.current_city ?? me.current_country} with consensus-approved guides.
+            {t("settle.main_subtitle", { city: effectiveMe.current_city ?? effectiveMe.current_country })}
           </p>
         </div>
 
         {/* Top Statistics Bar */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 bg-surface border border-border p-4 rounded-3xl shadow-sm">
           <div className="text-center sm:text-left sm:border-r sm:border-border/60 py-2 sm:pr-4">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Your Arrival</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("settle.your_arrival")}</p>
             <p className="text-sm font-semibold text-foreground mt-0.5">
-              {me.arrival_date ? `${me.arrival_date} (${getDaysLived(me.arrival_date)} days ago)` : "Not set"}
+              {effectiveMe.arrival_date ? `${effectiveMe.arrival_date} (${t("settle.days_ago", { days: getDaysLived(effectiveMe.arrival_date) })})` : "Not set"}
             </p>
           </div>
           <div className="text-center sm:border-r sm:border-border/60 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Suggest & Vote Eligibility</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("settle.eligibility_title")}</p>
             <p className={`text-sm font-semibold mt-0.5 ${isEligibleToSuggest ? "text-green-500" : "text-amber-500"}`}>
-              {isEligibleToSuggest ? "Eligible (>3 Months)" : "Ineligible (Lived here <90 Days)"}
+              {isEligibleToSuggest ? t("settle.eligible") : t("settle.newcomer")}
             </p>
           </div>
           <div className="text-center sm:text-right py-2 sm:pl-4">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Local Consensus Voters</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("settle.voters_title")}</p>
             <p className="text-sm font-semibold text-foreground mt-0.5">
-              {M} voters ({me.current_country})
+              {t("settle.voters_count", { count: M, country: effectiveMe.current_country })}
             </p>
           </div>
         </div>
@@ -367,7 +615,7 @@ function SettlePage() {
             }`}
           >
             <CheckSquare className="size-4" />
-            <span>Relocation Checklist</span>
+            <span>{t("settle.tab_checklist")}</span>
           </button>
           
           <button
@@ -379,7 +627,7 @@ function SettlePage() {
             }`}
           >
             <MapPin className="size-4" />
-            <span>Hometown Finds</span>
+            <span>{t("settle.tab_hometown")}</span>
           </button>
 
           <button
@@ -391,7 +639,7 @@ function SettlePage() {
             }`}
           >
             <Vote className="size-4" />
-            <span>Consensus Queue</span>
+            <span>{t("settle.tab_queue")}</span>
             {pendingSuggestions.length > 0 && (
               <span className="absolute -top-1 -right-1 sm:top-2 sm:right-2 flex size-5 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
                 {pendingSuggestions.length}
@@ -406,8 +654,10 @@ function SettlePage() {
             {/* Progress Card */}
             <div className="bg-surface border border-border p-5 rounded-3xl shadow-sm mb-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-foreground">Relocation Progress</span>
-                <span className="text-xs font-black text-accent">{checklistProgress}% Complete ({completedChecklist}/{totalChecklist} Tasks)</span>
+                <span className="text-xs font-bold uppercase tracking-wider text-foreground">{t("settle.progress_title")}</span>
+                <span className="text-xs font-black text-accent">
+                  {t("settle.progress_complete", { percent: checklistProgress, completed: completedChecklist, total: totalChecklist })}
+                </span>
               </div>
               <div className="w-full bg-background rounded-full h-2.5 overflow-hidden border border-border/40">
                 <div 
@@ -420,9 +670,9 @@ function SettlePage() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2">
               <div className="flex gap-1">
                 {[
-                  { id: "all", label: "All Tasks" },
-                  { id: "active", label: "To Do" },
-                  { id: "completed", label: "Completed" }
+                  { id: "all", label: t("settle.all_tasks") },
+                  { id: "active", label: t("settle.to_do") },
+                  { id: "completed", label: t("settle.completed") }
                 ].map(f => (
                   <button
                     key={f.id}
@@ -447,7 +697,7 @@ function SettlePage() {
                   }}
                   className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-accent border border-accent/20 bg-accent-soft px-3.5 py-2 rounded-xl hover:opacity-90 transition-all cursor-pointer self-start sm:self-center"
                 >
-                  <Plus className="size-4" /> Propose Item
+                  <Plus className="size-4" /> {t("settle.propose_item")}
                 </button>
               )}
             </div>
@@ -580,77 +830,151 @@ function SettlePage() {
           </div>
         )}
 
-        {/* Tab 2: Hometown Secrets Directory */}
+        {/* Tab 2: Hometown Secrets & Store Locator Directory */}
         {activeTab === "secrets" && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold uppercase tracking-tight text-foreground">Hometown Finds</h2>
-              {isEligibleToSuggest && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold uppercase tracking-tight text-foreground">Hometown Food & Spice Store Locator</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Verified markets, authentic ingredients, and student population hubs in {effectiveMe.current_city ?? effectiveMe.current_country} with direct Google Maps navigation.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="flex rounded-xl bg-surface border border-border p-1">
+                  <button
+                    onClick={() => setStoreViewMode("map")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                      storeViewMode === "map"
+                        ? "bg-accent text-accent-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <MapIcon className="size-3.5" /> Map View
+                  </button>
+                  <button
+                    onClick={() => setStoreViewMode("grid")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                      storeViewMode === "grid"
+                        ? "bg-accent text-accent-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <List className="size-3.5" /> Grid View
+                  </button>
+                </div>
+
                 <button
-                  onClick={() => {
-                    setSugType("hometown_find");
-                    setSugCategory("Grocery Store");
-                    setShowAddForm(!showAddForm);
-                  }}
-                  className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-accent border border-accent/20 bg-accent-soft px-3.5 py-2 rounded-xl hover:opacity-90 transition-all cursor-pointer"
+                  onClick={() => setShowAddForm(!showAddForm)}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-accent border border-accent/20 bg-accent-soft px-4 py-2 rounded-xl hover:opacity-90 active:scale-95 transition-all cursor-pointer"
                 >
-                  <Plus className="size-4" /> Propose Find
+                  <Plus className="size-4" /> Propose Store Find
                 </button>
-              )}
+              </div>
             </div>
 
-            {showAddForm && sugType === "hometown_find" && (
-              <form onSubmit={handleCreateSuggestion} className="bg-surface border border-border p-6 rounded-3xl space-y-4 animate-scale-in">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Propose new Hometown Find</h3>
-                <div className="space-y-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase tracking-wider opacity-60">Place Name</label>
-                    <input
-                      type="text"
-                      required
-                      value={sugTitle}
-                      onChange={(e) => setSugTitle(e.target.value)}
-                      placeholder="e.g. Little Asia Market"
-                      className="input-field"
-                    />
+            {/* Propose Store Find Modal Form */}
+            {showAddForm && (
+              <form onSubmit={handleCreateStoreProposal} className="bg-surface border border-border p-6 rounded-3xl space-y-4 animate-scale-in shadow-lg">
+                <div className="flex items-center justify-between border-b border-border pb-3">
+                  <div>
+                    <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Propose a New Hometown Store</h3>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Share an authentic market or food spot with fellow international students.</p>
                   </div>
+                  <button type="button" onClick={() => setShowAddForm(false)} className="text-muted-foreground hover:text-foreground">
+                    <X className="size-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-3">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold uppercase tracking-wider opacity-60">Category</label>
+                      <label className="text-[10px] font-bold uppercase tracking-wider opacity-60">Store / Place Name *</label>
+                      <input
+                        type="text"
+                        required
+                        value={sugTitle}
+                        onChange={(e) => setSugTitle(e.target.value)}
+                        placeholder="e.g. Asia Land Market"
+                        className="input-field"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase tracking-wider opacity-60">Category *</label>
                       <select
                         value={sugCategory}
                         onChange={(e) => setSugCategory(e.target.value)}
                         className="input-field"
                       >
-                        <option value="Grocery Store">Grocery Store</option>
-                        <option value="Restaurant">Restaurant</option>
-                        <option value="Student Hub">Student Hub</option>
-                        <option value="Hair Salon / Beauty">Hair Salon / Beauty</option>
-                        <option value="Other">Other</option>
+                        <option value="Asian">Asian Grocers</option>
+                        <option value="Halal / Middle Eastern">Halal & Middle Eastern</option>
+                        <option value="Latin American">Latin American</option>
+                        <option value="African / Caribbean">African & Caribbean</option>
+                        <option value="European / Bakery">European & Bakery</option>
                       </select>
                     </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold uppercase tracking-wider opacity-60">Google Maps Link (Optional)</label>
+                      <label className="text-[10px] font-bold uppercase tracking-wider opacity-60">Exact Street Address *</label>
                       <input
-                        type="url"
-                        value={sugLink}
-                        onChange={(e) => setSugLink(e.target.value)}
-                        placeholder="https://maps.google.com/..."
+                        type="text"
+                        required
+                        value={sugAddress}
+                        onChange={(e) => setSugAddress(e.target.value)}
+                        placeholder="e.g. Kantstraße 101, 10627 Berlin"
+                        className="input-field"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase tracking-wider opacity-60">Phone Number (Optional)</label>
+                      <input
+                        type="text"
+                        value={sugPhone}
+                        onChange={(e) => setSugPhone(e.target.value)}
+                        placeholder="e.g. +49 30 3180 5511"
                         className="input-field"
                       />
                     </div>
                   </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase tracking-wider opacity-60">Opening Hours</label>
+                      <input
+                        type="text"
+                        value={sugHours}
+                        onChange={(e) => setSugHours(e.target.value)}
+                        placeholder="e.g. Mon-Sat: 09:00 - 20:00"
+                        className="input-field"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase tracking-wider opacity-60">Hometown Specialties (Comma Separated)</label>
+                      <input
+                        type="text"
+                        value={sugSpecialties}
+                        onChange={(e) => setSugSpecialties(e.target.value)}
+                        placeholder="e.g. Basmati Rice, Harina PAN, Kimchi, Injera"
+                        className="input-field"
+                      />
+                    </div>
+                  </div>
+
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase tracking-wider opacity-60">Why recommend this place?</label>
+                    <label className="text-[10px] font-bold uppercase tracking-wider opacity-60">Description & Recommendations *</label>
                     <textarea
                       required
                       rows={3}
                       value={sugDesc}
                       onChange={(e) => setSugDesc(e.target.value)}
-                      placeholder="Describe what they sell, home country items they carry, prices, and where it is..."
+                      placeholder="Tell fellow students what authentic products they sell, prices, and why it is great..."
                       className="input-field resize-none"
                     />
                   </div>
+
                   <div className="pt-2 flex justify-end gap-2">
                     <button
                       type="button"
@@ -663,69 +987,302 @@ function SettlePage() {
                       type="submit"
                       className="px-5 py-2 bg-foreground text-background rounded-xl text-xs font-bold uppercase hover:opacity-90 cursor-pointer"
                     >
-                      Submit Find
+                      Submit Store Find
                     </button>
                   </div>
                 </div>
               </form>
             )}
 
-            {activeSecrets.length === 0 ? (
-              <div className="rounded-3xl border border-dashed border-border/80 bg-surface/50 p-12 text-center">
-                <MapPin className="size-8 text-muted-foreground mx-auto opacity-60" />
-                <h3 className="mt-3 text-sm font-bold uppercase tracking-wider">No local secrets recorded yet</h3>
-                <p className="text-xs text-muted-foreground mt-1 max-w-[40ch] mx-auto">
-                  Be the first to list a grocery store, authentic restaurant, or local student hub in {me.current_city}!
-                </p>
-                {isEligibleToSuggest && (
+            {/* Search & Category Filter Bar */}
+            <div className="rounded-2xl bg-surface border border-border p-4 space-y-4 shadow-sm">
+              <div className="relative flex items-center">
+                <Search className="absolute left-3.5 size-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={storeSearchQuery}
+                  onChange={(e) => setStoreSearchQuery(e.target.value)}
+                  placeholder="Search stores, specialties (e.g. Basmati, Harina PAN, Kimchi, Injera), or address..."
+                  className="w-full rounded-full border border-border bg-background pl-10 pr-9 py-2.5 text-xs outline-none focus:ring-2 focus:ring-accent/30 transition-shadow"
+                />
+                {storeSearchQuery && (
                   <button
-                    onClick={() => {
-                      setSugType("hometown_find");
-                      setSugCategory("Grocery Store");
-                      setShowAddForm(true);
-                    }}
-                    className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-accent border border-accent/20 bg-accent-soft px-3.5 py-2 rounded-xl hover:opacity-90 transition-all mt-4 cursor-pointer"
+                    onClick={() => setStoreSearchQuery("")}
+                    className="absolute right-3 text-muted-foreground hover:text-foreground"
                   >
-                    <Plus className="size-3.5" /> Submit new place
+                    <X className="size-3.5" />
                   </button>
                 )}
               </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {activeSecrets.map((find) => {
-                  const author = profiles.find(p => p.id === find.created_by);
-                  return (
-                    <div key={find.id} className="flex flex-col justify-between p-5 rounded-3xl border border-border bg-surface shadow-sm hover:shadow-md hover:border-accent/15 transition-all">
-                      <div>
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="inline-block bg-accent-soft text-accent text-[9px] font-bold uppercase px-2 py-0.5 rounded-lg border border-accent/10">
-                            {find.category}
-                          </span>
-                          <span className="text-[10px] font-medium text-muted-foreground flex items-center gap-1">
-                            Shared by {author?.name ?? "Senior Peer"}
-                          </span>
-                        </div>
-                        <h4 className="text-base font-bold mt-2 text-foreground">{find.title}</h4>
-                        <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{find.description}</p>
-                      </div>
-                      
-                      {find.link && (
-                        <div className="mt-4 pt-3 border-t border-border/40 flex justify-between items-center">
-                          <a
-                            href={find.link}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-accent hover:underline"
-                          >
-                            Google Maps location <ExternalLink className="size-3.5" />
-                          </a>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+
+              {/* Category Chips */}
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { id: "all", label: "All Specialty Stores" },
+                  { id: "Asian", label: "Asian Grocers" },
+                  { id: "Halal / Middle Eastern", label: "Halal & Middle Eastern" },
+                  { id: "Latin American", label: "Latin American" },
+                  { id: "African / Caribbean", label: "African & Caribbean" },
+                  { id: "European / Bakery", label: "European & Bakery" },
+                ].map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setStoreCategory(cat.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      storeCategory === cat.id
+                        ? "bg-accent text-accent-foreground shadow-sm"
+                        : "border border-border bg-background text-foreground hover:bg-accent-soft/30 hover:border-accent/30"
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Town / City Filter Bar */}
+              <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-border/40">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                  <Globe className="size-3 text-accent" /> Focus Town:
+                </span>
+                {[
+                  { id: "my_city", label: `My Town (${me?.current_city || "Berlin"})` },
+                  { id: "Berlin", label: "Berlin" },
+                  { id: "Munich", label: "Munich" },
+                  { id: "London", label: "London" },
+                  { id: "São Paulo", label: "São Paulo" },
+                  { id: "Paris", label: "Paris" },
+                  { id: "all", label: "All Towns" },
+                ].map((town) => (
+                  <button
+                    key={town.id}
+                    onClick={() => setSelectedCityFilter(town.id)}
+                    className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      selectedCityFilter === town.id
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "border border-border/80 bg-background text-muted-foreground hover:text-foreground hover:border-accent/40"
+                    }`}
+                  >
+                    {town.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Interactive Map View */}
+            {storeViewMode === "map" && (
+              <div className="space-y-3">
+                <MapView markers={storeMapMarkers} className="h-[460px] w-full rounded-3xl overflow-hidden border border-border shadow-md" />
+                <div className="flex items-center justify-between px-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  <span>Showing {storeMapMarkers.length} locations (Stores & Student Density Hubs)</span>
+                  <span>Tap any pin to view address & open Google Maps directions</span>
+                </div>
               </div>
             )}
+
+            {/* Store Grid Cards */}
+            {activeFilteredStores.length === 0 ? (
+              <EmptyStateCTA
+                icon={Store}
+                title="No hometown stores found"
+                description="No specialty stores match your category filter or search query. Reset filters or propose a new store to help fellow students!"
+                badge="Hometown Groceries"
+                primaryAction={{
+                  label: "Propose Store Find",
+                  icon: Plus,
+                  onClick: () => setShowAddForm(true),
+                }}
+                secondaryAction={{
+                  label: "Clear Filters",
+                  icon: RotateCcw,
+                  onClick: () => {
+                    setStoreSearchQuery("");
+                    setStoreCategory("all");
+                    setSelectedCityFilter("all");
+                  },
+                }}
+              />
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {activeFilteredStores.map((store) => (
+                  <div
+                    key={store.id}
+                    className="flex flex-col justify-between p-5 rounded-3xl border border-border bg-surface shadow-sm hover:shadow-md hover:border-accent/30 transition-all space-y-4"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="inline-block bg-accent-soft text-accent text-[9px] font-bold uppercase px-2.5 py-1 rounded-lg border border-accent/15">
+                          {store.category}
+                        </span>
+                        <span className="text-xs font-black text-amber-500 flex items-center gap-1">
+                          <Star className="size-3.5 fill-amber-500" />
+                          <span>{store.rating} ({store.reviewsCount} reviews)</span>
+                        </span>
+                      </div>
+
+                      <div>
+                        <h3 className="text-lg font-bold text-foreground">{store.name}</h3>
+                        <p className="text-xs font-medium text-muted-foreground mt-0.5 flex items-center gap-1.5">
+                          <MapPin className="size-3.5 text-accent shrink-0" />
+                          <span>{store.address}</span>
+                        </p>
+                      </div>
+
+                      <p className="text-xs text-muted-foreground leading-relaxed">{store.description}</p>
+
+                      {/* Hometown Specialties Pills */}
+                      <div className="space-y-1">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Popular Hometown Specialties:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {store.specialties.map((item, i) => (
+                            <span key={i} className="bg-background border border-border/60 text-foreground text-[9px] font-semibold px-2 py-0.5 rounded-md">
+                              {item}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Opening hours & phone */}
+                      <div className="flex flex-wrap items-center justify-between text-[10px] text-muted-foreground pt-2 border-t border-border/40 gap-2">
+                        <span className="flex items-center gap-1">
+                          <Clock className="size-3 text-accent" />
+                          <span>{store.hours}</span>
+                        </span>
+                        {store.phone && (
+                          <a href={`tel:${store.phone}`} className="flex items-center gap-1 font-semibold text-foreground hover:text-accent">
+                            <Phone className="size-3 text-accent" />
+                            <span>{store.phone}</span>
+                          </a>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Actions: Google Maps Directions & Share Location */}
+                    <div className="grid grid-cols-2 gap-2 pt-3 border-t border-border/40">
+                      <a
+                        href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(store.address)}`}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-foreground text-background py-2.5 text-xs font-bold uppercase tracking-wider hover:opacity-90 active:scale-95 transition-all"
+                      >
+                        <Navigation className="size-3.5 text-accent" />
+                        <span>Directions</span>
+                      </a>
+
+                      <button
+                        type="button"
+                        onClick={() => handleShareStore(store)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-background py-2.5 text-xs font-bold uppercase tracking-wider text-foreground hover:bg-accent-soft/30 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <Share2 className="size-3.5 text-accent" />
+                        <span>Share</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Student Population Density / Neighborhood Clusters Section */}
+            <div className="mt-12 pt-8 border-t border-border space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-600 border border-indigo-500/20 text-[9px] font-black uppercase tracking-wider mb-1">
+                    <Users className="size-3" />
+                    <span>Real-Time Population Heatmap</span>
+                  </div>
+                  <h3 className="text-xl font-bold uppercase tracking-tight text-foreground">Student Population Density Hubs</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Densely populated international student neighborhoods & campus clusters in {effectiveMe.current_city ?? effectiveMe.current_country}.
+                  </p>
+                </div>
+              </div>
+
+              {activeStudentHubs.length === 0 ? (
+                <div className="p-8 rounded-3xl bg-surface border border-dashed border-border text-center space-y-3">
+                  <div className="flex justify-center text-accent">
+                    <Users className="size-8" />
+                  </div>
+                  <h4 className="text-base font-bold text-foreground">No Density Hubs Recorded in {selectedCityFilter === "my_city" ? (effectiveMe.current_city ?? effectiveMe.current_country) : selectedCityFilter} Yet</h4>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">
+                    Be the first to record your living neighborhood! Enter your specific area in your profile settings to pin your cluster live on the population heatmap.
+                  </p>
+                  <Link
+                    to="/profile"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-foreground text-background text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all mt-2 cursor-pointer"
+                  >
+                    <span>Set My Living Area in Profile</span>
+                  </Link>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  {activeStudentHubs.map((hub) => (
+                    <div key={hub.id} className="relative flex flex-col justify-between p-6 rounded-3xl border border-indigo-500/20 bg-gradient-to-b from-surface via-surface to-indigo-500/5 space-y-4 shadow-sm hover:shadow-md hover:border-indigo-500/40 transition-all">
+                      {/* Top Density Badge */}
+                      <div className="flex items-center justify-between">
+                        <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider bg-indigo-600 text-white px-3 py-1 rounded-full shadow-sm">
+                          <Users className="size-3" />
+                          <span>High Density • {hub.studentCount} {hub.studentCount === 1 ? "Student" : "Students"}</span>
+                        </span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          {hub.city}
+                        </span>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-base text-foreground">{hub.areaName}</h4>
+                        <p className="text-xs font-semibold text-accent mt-1">
+                          Top Nationalities: {hub.topCountries.join(", ")}
+                        </p>
+                      </div>
+
+                      <p className="text-xs text-muted-foreground leading-relaxed">{hub.description}</p>
+
+                      {/* Popular Student Spots */}
+                      <div className="space-y-1.5">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Popular Student Hangout Spots:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {hub.popularPlaces.map((place: string, idx: number) => (
+                            <span key={idx} className="bg-surface border border-indigo-500/20 text-foreground text-[9.5px] font-semibold px-2.5 py-1 rounded-lg">
+                              {place}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Actions: Directions & Share Area */}
+                      <div className="grid grid-cols-2 gap-2 pt-3 border-t border-border/40">
+                        <a
+                          href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${hub.areaName}, ${hub.city}`)}`}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-foreground text-background py-2.5 text-xs font-bold uppercase tracking-wider hover:opacity-90 active:scale-95 transition-all"
+                        >
+                          <Navigation className="size-3.5 text-accent" />
+                          <span>Directions</span>
+                        </a>
+
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${hub.areaName}, ${hub.city}`)}`;
+                            if (navigator.share) {
+                              await navigator.share({ title: hub.areaName, url: mapsUrl }).catch(() => {});
+                            } else if (navigator.clipboard) {
+                              await navigator.clipboard.writeText(mapsUrl);
+                              toast.success("Area location link copied to clipboard!");
+                            }
+                          }}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-background py-2.5 text-xs font-bold uppercase tracking-wider text-foreground hover:bg-accent-soft/30 active:scale-95 transition-all cursor-pointer"
+                        >
+                          <Share2 className="size-3.5 text-accent" />
+                          <span>Share Area</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -745,7 +1302,7 @@ function SettlePage() {
                 <Check className="size-8 text-green-500 bg-green-500/10 p-1.5 rounded-full border border-green-500/20 mx-auto" />
                 <h3 className="mt-3 text-sm font-bold uppercase tracking-wider text-foreground">Review Queue is Clear!</h3>
                 <p className="text-xs text-muted-foreground mt-1 max-w-[45ch] mx-auto">
-                  All community tips and finds for {me.current_country} have been processed or approved. Check back later!
+                  All community tips and finds for {effectiveMe.current_country} have been processed or approved. Check back later!
                 </p>
               </div>
             ) : (
@@ -807,7 +1364,7 @@ function SettlePage() {
                         <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider">
                           <span className="text-accent flex items-center gap-1.5">
                             <Clock className="size-3.5" />
-                            {approvalPercent}% Agreement ({agrees} / {voterPoolCount} Eligible Residents Agree)
+                            {approvalPercent}% Agreement ({agrees} / {voterPoolCount > 0 ? voterPoolCount : 1} Eligible {voterPoolCount === 1 ? "Resident" : "Residents"} Agree)
                           </span>
                           <span className="text-muted-foreground">
                             {neededAgrees > 0 ? `${neededAgrees} more Agree votes needed` : "Consensus reached!"}
@@ -863,8 +1420,6 @@ function SettlePage() {
           </div>
         )}
       </div>
-
-      <BottomNav />
     </div>
   );
 }

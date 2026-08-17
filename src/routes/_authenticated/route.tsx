@@ -1,21 +1,37 @@
-import { createFileRoute, Outlet } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useLocation, redirect } from "@tanstack/react-router";
+import { auth } from "@/integrations/firebase/config";
+import { BottomNav } from "@/components/BottomNav";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
   beforeLoad: () => {
-    let userId = localStorage.getItem("connect_abroad_user_id");
-    if (!userId) {
-      userId = typeof crypto.randomUUID === "function" 
-        ? crypto.randomUUID() 
-        : Math.random().toString(36).substring(2) + Date.now().toString(36);
-      localStorage.setItem("connect_abroad_user_id", userId);
+    const userId = typeof window !== "undefined" ? localStorage.getItem("connect_abroad_user_id") : null;
+    const firebaseUser = auth.currentUser;
+    
+    if (!userId && !firebaseUser) {
+      throw redirect({ to: "/" });
     }
+    
     return { 
       user: { 
-        id: userId, 
-        email: "student@connectabroad.com" 
+        id: userId || firebaseUser?.uid || "guest", 
+        email: firebaseUser?.email || "student@connectabroad.com" 
       } 
     };
   },
-  component: () => <Outlet />,
+  component: AuthenticatedLayout,
 });
+
+function AuthenticatedLayout() {
+  const location = useLocation();
+
+  return (
+    <div className="relative min-h-screen bg-background">
+      <div key={location.pathname} className="animate-page-transition">
+        <Outlet />
+      </div>
+      <BottomNav />
+    </div>
+  );
+}
+

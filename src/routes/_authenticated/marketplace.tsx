@@ -6,7 +6,6 @@ import {
   Plus, 
   Trash2, 
   User, 
-  ExternalLink, 
   MessageCircle, 
   Globe, 
   GraduationCap, 
@@ -16,15 +15,16 @@ import {
   Home, 
   Heart,
   X,
-  Languages,
   ChefHat,
-  Clock
+  Languages,
+  RotateCcw
 } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
-import { BottomNav } from "@/components/BottomNav";
+import { EmptyStateCTA } from "@/components/EmptyStateCTA";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { codeFor } from "@/lib/countries";
+import { useTranslation } from "@/lib/i18n";
 
 export const Route = createFileRoute("/_authenticated/marketplace")({
   component: MarketplacePage,
@@ -81,6 +81,7 @@ type MarketItem = {
 };
 
 function MarketplacePage() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [me, setMe] = useState<Profile | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -223,12 +224,12 @@ function MarketplacePage() {
                 <ShoppingBag className="size-4" />
               </span>
               <span className="text-[10px] font-bold uppercase tracking-widest text-accent">
-                Student Housing & Trade
+                {t("market.eyebrow")}
               </span>
             </div>
-            <h1 className="font-display mt-2 text-3xl uppercase">Marketplace in {me.current_city}</h1>
+            <h1 className="font-display mt-2 text-3xl uppercase">{t("market.main_title", { city: me.current_city ?? "" })}</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Find student sublets, roommates, and buy or sell furniture and textbooks within your trusted university network.
+              {t("market.main_desc")}
             </p>
           </div>
           
@@ -236,7 +237,7 @@ function MarketplacePage() {
             onClick={() => setShowAddModal(true)}
             className="self-start md:self-center inline-flex items-center gap-1.5 rounded-full bg-foreground px-6 py-3.5 text-xs font-semibold text-background hover:opacity-90 active:scale-95 transition-all shadow-lg shadow-black/10 cursor-pointer"
           >
-            <Plus className="size-4" /> Create Listing
+            <Plus className="size-4" /> {t("market.create_listing")}
           </button>
         </div>
 
@@ -249,7 +250,7 @@ function MarketplacePage() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search rooms, tables, books..."
+              placeholder={t("market.search_placeholder")}
               className="w-full rounded-xl border border-border bg-background pl-10 pr-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-accent/40 focus:shadow-md transition-all"
             />
             {searchQuery && (
@@ -265,12 +266,12 @@ function MarketplacePage() {
           {/* Categories */}
           <div className="md:col-span-8 flex flex-wrap gap-1.5 md:justify-end">
             {[
-              { id: "all", label: "All Items" },
-              { id: "sublet", label: "Sublets" },
-              { id: "flatshare", label: "Flatshares" },
-              { id: "sale", label: "For Sale" },
-              { id: "free", label: "Free Items" },
-              { id: "wanted", label: "Wanted" },
+              { id: "all", label: t("market.filter_all") },
+              { id: "sublet", label: t("market.filter_sublets") },
+              { id: "flatshare", label: t("market.filter_flatshares") },
+              { id: "sale", label: t("market.filter_sale") },
+              { id: "free", label: t("market.filter_free") },
+              { id: "wanted", label: t("market.filter_wanted") },
             ].map(cat => (
               <button
                 key={cat.id}
@@ -289,13 +290,25 @@ function MarketplacePage() {
 
         {/* Listings Feed */}
         {filteredItems.length === 0 ? (
-          <div className="rounded-3xl border border-dashed border-border/80 bg-surface/50 p-12 text-center">
-            <ShoppingBag className="size-10 text-muted-foreground mx-auto opacity-50" />
-            <h3 className="mt-3 text-sm font-bold uppercase tracking-wider text-foreground">No listings found</h3>
-            <p className="text-xs text-muted-foreground mt-1 max-w-[38ch] mx-auto">
-              We couldn't find any listings matching your selection in {me.current_city}. Try adjusting your search query or create the first post!
-            </p>
-          </div>
+          <EmptyStateCTA
+            icon={ShoppingBag}
+            title="No marketplace listings found"
+            description={`No student listings match your active filters in ${me?.current_city ?? "your city"}. List a new item or reset filters!`}
+            badge="Peer Marketplace"
+            primaryAction={{
+              label: "Create a Listing",
+              icon: Plus,
+              onClick: () => setShowAddModal(true),
+            }}
+            secondaryAction={{
+              label: "Clear Filters",
+              icon: RotateCcw,
+              onClick: () => {
+                setSearchQuery("");
+                setActiveCategory("all");
+              },
+            }}
+          />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             {filteredItems.map(item => {
@@ -651,8 +664,6 @@ function MarketplacePage() {
           </div>
         </div>
       )}
-
-      <BottomNav />
     </div>
   );
 }

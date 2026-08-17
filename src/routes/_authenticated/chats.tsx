@@ -1,26 +1,21 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Send, MessageSquare, Globe, Home, MapPin, Sparkles, Compass } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
-import { BottomNav } from "@/components/BottomNav";
-import { supabase } from "@/integrations/supabase/client";
+import { EmptyStateCTA } from "@/components/EmptyStateCTA";
 import { useAuth } from "@/lib/auth";
 import { codeFor } from "@/lib/countries";
+import { useTranslation } from "@/lib/i18n";
+import {
+  subscribeProfiles,
+  subscribeChannelChats,
+  addChatMessageToFirebase,
+  type ChatMessageItem,
+} from "@/integrations/firebase/firestore";
 
 export const Route = createFileRoute("/_authenticated/chats")({
   component: ChatsPage,
 });
-
-type Message = {
-  id: string;
-  user_id: string;
-  user_name: string;
-  home_country: string;
-  current_city: string;
-  channel: string;
-  content: string;
-  created_at: string;
-};
 
 type Profile = {
   id: string;
@@ -32,66 +27,71 @@ type Profile = {
 };
 
 function ChatsPage() {
+  const { t } = useTranslation();
   const { user } = useAuth();
-  const navigate = useNavigate();
-  const [me, setMe] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [me, setMe] = useState<Profile | null>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("connect_abroad_profile");
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {
+          return null;
+        }
+      }
+    }
+    return null;
+  });
+  const [loading, setLoading] = useState(false);
+  const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [activeTab, setActiveTab] = useState<"global" | "home_country" | "current_country" | "current_city">("global");
   const feedContainerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch current user details
+  // Subscribe to live Firebase Firestore user profiles to keep details updated
   useEffect(() => {
     if (!user) return;
-    (async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (!data || !data.onboarded) {
-        navigate({ to: "/onboarding" });
-        return;
+    const unsubscribe = subscribeProfiles((profiles: any[]) => {
+      const mine = profiles.find(
+        (p) =>
+          p.id === user.id ||
+          (p.name && user.displayName && p.name.toLowerCase() === user.displayName.toLowerCase()) ||
+          (p.name && me?.name && p.name.toLowerCase() === me.name.toLowerCase())
+      );
+      if (mine) {
+        setMe(mine as Profile);
+        localStorage.setItem("connect_abroad_profile", JSON.stringify(mine));
       }
-      setMe(data as Profile);
-      setLoading(false);
-    })();
-  }, [user, navigate]);
+    });
+    return () => unsubscribe();
+  }, [user]);
 
-  // Determine current channel name
-  const currentChannel = typeof window !== "undefined" && me 
-    ? activeTab === "global" 
-      ? "global" 
-      : activeTab === "home_country" 
-        ? `home_country_${me.home_country}` 
-        : activeTab === "current_country"
-          ? `current_country_${me.current_country}`
-          : `current_city_${me.current_city}`
-    : "global";
-
-  // Fetch channel messages
-  const fetchMessages = async () => {
-    if (!me) return;
-    const { data } = await supabase
-      .from("chats")
-      .select("*")
-      .eq("channel", currentChannel);
-    // Sort chronologically by date
-    const sorted = (data ?? []).sort(
-      (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    );
-    setMessages(sorted as Message[]);
+  const effectiveMe: Profile = me || {
+    id: user?.id || "guest",
+    name: user?.displayName || user?.email?.split("@")[0] || "Student",
+    home_country: "India",
+    current_country: "Italy",
+    current_city: "Parma",
+    onboarded: true,
   };
 
+  // Determine current channel name based on exact user details
+  const currentChannel = activeTab === "global" 
+    ? "global" 
+    : activeTab === "home_country" 
+      ? `home_country_${effectiveMe.home_country}` 
+      : activeTab === "current_country"
+        ? `current_country_${effectiveMe.current_country}`
+        : `current_city_${effectiveMe.current_city ?? effectiveMe.current_country}`;
+
+  // Subscribe to real-time Firebase Cloud Chat Messages
   useEffect(() => {
-    if (!me) return;
-    fetchMessages();
-    
-    // Set up a tiny local storage polling interval to simulate "live" updates if they open two tabs
-    const interval = setInterval(fetchMessages, 3000);
-    return () => clearInterval(interval);
-  }, [me, currentChannel]);
+    if (!currentChannel) return;
+    const unsubscribe = subscribeChannelChats(currentChannel, (cloudMsgs) => {
+      setMessages(cloudMsgs);
+    });
+    return () => unsubscribe();
+  }, [currentChannel]);
 
   // Scroll to bottom on new messages without moving page viewport
   useEffect(() => {
@@ -102,37 +102,28 @@ function ChatsPage() {
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !me || !user) return;
+    if (!newMessage.trim() || !user) return;
 
-    const payload = {
-      user_id: user.id,
-      user_name: me.name,
-      home_country: me.home_country,
-      current_city: me.current_city,
-      channel: currentChannel,
-      content: newMessage.trim(),
-    };
-
-    await supabase.from("chats").upsert(payload);
+    const contentText = newMessage.trim();
     setNewMessage("");
-    fetchMessages();
+
+    await addChatMessageToFirebase({
+      user_id: user.id,
+      user_name: effectiveMe.name,
+      home_country: effectiveMe.home_country,
+      current_city: effectiveMe.current_city ?? effectiveMe.current_country,
+      channel: currentChannel,
+      content: contentText,
+    });
   };
 
-  if (loading || !me) {
-    return (
-      <div className="flex min-h-screen items-center justify-center text-muted-foreground animate-pulse bg-background">
-        Loading chats...
-      </div>
-    );
-  }
-
   const channelLabel = activeTab === "global" 
-    ? "Global Community" 
+    ? t("chats.global_community") 
     : activeTab === "home_country" 
-      ? `Students from ${me.home_country}` 
+      ? t("chats.home_country_desc", { country: effectiveMe.home_country })
       : activeTab === "current_country"
-        ? `Students in ${me.current_country}`
-        : `Students in ${me.current_city}`;
+        ? t("chats.current_country_desc", { country: effectiveMe.current_country })
+        : t("chats.current_city_desc", { city: effectiveMe.current_city ?? effectiveMe.current_country });
 
   return (
     <div className="min-h-screen bg-background pb-32">
@@ -147,10 +138,10 @@ function ChatsPage() {
                 <MessageSquare className="size-4" />
               </span>
               <span className="text-[10px] font-bold uppercase tracking-widest text-accent">
-                Cluster Live Chats
+                {t("chats.eyebrow")}
               </span>
             </div>
-            <h1 className="font-display mt-2 text-3xl uppercase">Chat Rooms</h1>
+            <h1 className="font-display mt-2 text-3xl uppercase">{t("chats.title")}</h1>
           </div>
         </div>
 
@@ -165,7 +156,7 @@ function ChatsPage() {
             }`}
           >
             <Globe className="size-4" />
-            <span>Global</span>
+            <span>{t("chats.global")}</span>
           </button>
           
           <button
@@ -177,7 +168,7 @@ function ChatsPage() {
             }`}
           >
             <Home className="size-4" />
-            <span>From {codeFor(me.home_country)}</span>
+            <span>{t("chats.from_in", { country: codeFor(effectiveMe.home_country) })}</span>
           </button>
 
           <button
@@ -189,7 +180,7 @@ function ChatsPage() {
             }`}
           >
             <Compass className="size-4" />
-            <span>In {codeFor(me.current_country)}</span>
+            <span>{t("chats.in_country", { country: codeFor(effectiveMe.current_country) })}</span>
           </button>
 
           <button
@@ -201,7 +192,7 @@ function ChatsPage() {
             }`}
           >
             <MapPin className="size-4" />
-            <span>In {me.current_city}</span>
+            <span>{t("chats.in_city", { city: effectiveMe.current_city ?? effectiveMe.current_country })}</span>
           </button>
         </div>
 
@@ -210,27 +201,29 @@ function ChatsPage() {
           
           {/* Left Column: Chat Room Details (4 cols - Desktop Only) */}
           <div className="md:col-span-4 bg-surface border border-border rounded-3xl p-5 space-y-4 hidden md:block md:sticky md:top-24">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-foreground pb-2 border-b border-border">Channel details</h3>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-foreground pb-2 border-b border-border">{t("chats.channel_details")}</h3>
             <div className="space-y-3">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-accent">{channelLabel}</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-accent">
+                  {activeTab === "global" ? t("chats.global_community") : channelLabel}
+                </p>
                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                  {activeTab === "global" && "A public lobby to chat with every international student registered on ConnectAbroad."}
-                  {activeTab === "home_country" && `Connect and share advice with other students who came from ${me.home_country}.`}
-                  {activeTab === "current_country" && `Discuss events, housing, visas, and travel tips with students living in ${me.current_country}.`}
-                  {activeTab === "current_city" && `Discuss local spots, housing, and university tips with students located in ${me.current_city}.`}
+                  {activeTab === "global" && t("chats.global_desc")}
+                  {activeTab === "home_country" && t("chats.home_country_desc", { country: effectiveMe.home_country })}
+                  {activeTab === "current_country" && t("chats.current_country_desc", { country: effectiveMe.current_country })}
+                  {activeTab === "current_city" && t("chats.current_city_desc", { city: effectiveMe.current_city ?? effectiveMe.current_country })}
                 </p>
               </div>
 
               <div className="pt-3 border-t border-border">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Posting as:</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t("chats.posting_as")}</p>
                 <div className="flex items-center gap-3 mt-2 p-2 rounded-xl bg-background border border-border/40">
                   <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground text-xs font-black">
-                    {me.name.split(" ").map(s => s[0]).slice(0,2).join("").toUpperCase()}
+                    {effectiveMe.name.split(" ").map(s => s[0]).slice(0,2).join("").toUpperCase()}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold truncate text-foreground">{me.name}</p>
-                    <p className="text-[9px] text-muted-foreground font-semibold uppercase">{codeFor(me.home_country)} &rarr; {me.current_city}</p>
+                    <p className="text-xs font-bold truncate text-foreground">{effectiveMe.name}</p>
+                    <p className="text-[9px] text-muted-foreground font-semibold uppercase">{codeFor(effectiveMe.home_country)} &rarr; {effectiveMe.current_city ?? effectiveMe.current_country}</p>
                   </div>
                 </div>
               </div>
@@ -241,18 +234,28 @@ function ChatsPage() {
           <div className="md:col-span-8 flex flex-col rounded-3xl border border-border bg-surface shadow-sm overflow-hidden h-[500px]">
             {/* Feed Header */}
             <div className="bg-background/40 border-b border-border px-5 py-4 flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-foreground">{channelLabel}</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+                {activeTab === "global" ? t("chats.global_community") : channelLabel}
+              </span>
               <span className="inline-flex size-2 animate-pulse rounded-full bg-accent" />
             </div>
 
             {/* Chat message feed log */}
             <div ref={feedContainerRef} className="flex-1 overflow-y-auto p-5 space-y-4 no-scrollbar">
               {messages.length === 0 && (
-                <div className="h-full flex flex-col items-center justify-center text-center p-6">
-                  <MessageSquare className="size-8 text-accent/40 mb-2" />
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">No messages yet</p>
-                  <p className="text-[11px] text-muted-foreground mt-1 max-w-[28ch]">Be the first to post a message in this channel!</p>
-                </div>
+                <EmptyStateCTA
+                  icon={MessageSquare}
+                  title="No chat messages yet"
+                  description="Be the first to say hello in this channel! Connect with peers and native local hosts."
+                  badge="Real-Time Chat"
+                  primaryAction={{
+                    label: "Say Hello",
+                    icon: Send,
+                    onClick: () => {
+                      setNewMessage("Hello everyone! Glad to connect here.");
+                    },
+                  }}
+                />
               )}
               {messages.map((msg) => {
                 const isMine = msg.user_id === user?.id;
@@ -303,13 +306,33 @@ function ChatsPage() {
               })}
             </div>
 
+            {/* Quick Greeting Action Chips */}
+            <div className="px-4 pt-2.5 flex items-center gap-1.5 overflow-x-auto no-scrollbar border-t border-border/40">
+              <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground shrink-0 mr-1">Quick Greetings:</span>
+              {[
+                { label: "Hello", text: "Hello everyone!" },
+                { label: "Welcome", text: "Welcome to the group!" },
+                { label: "Coffee", text: "Anyone free for coffee today?" },
+                { label: "Local Guide", text: "Any local native guides around?" },
+              ].map((chip) => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  onClick={() => setNewMessage((prev) => (prev ? `${prev} ${chip.text}` : chip.text))}
+                  className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-lg bg-surface border border-border text-foreground hover:bg-accent-soft/30 hover:border-accent/30 active:scale-95 transition-all cursor-pointer shrink-0"
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+
             {/* Input Send Message Form */}
-            <form onSubmit={handleSend} className="p-4 border-t border-border bg-background/20 flex gap-2">
+            <form onSubmit={handleSend} className="p-4 border-t border-border/40 bg-background/20 flex gap-2">
               <input
                 type="text"
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
-                placeholder={`Type a message in ${activeTab}...`}
+                placeholder={t("chats.type_message")}
                 className="flex-1 rounded-xl border border-border bg-surface px-4 py-2.5 text-xs outline-none transition-all duration-300 focus:border-accent focus:ring-4 focus:ring-accent/15"
               />
               <button
@@ -324,8 +347,6 @@ function ChatsPage() {
 
         </div>
       </div>
-
-      <BottomNav />
     </div>
   );
 }

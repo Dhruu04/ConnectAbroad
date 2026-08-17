@@ -1,11 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { saveUserProfile } from "@/integrations/firebase/firestore";
 import { COUNTRIES } from "@/lib/countries";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { TopBar } from "@/components/TopBar";
-import { Compass, Home, MapPin, Globe, Upload } from "lucide-react";
+import { Compass, Home, MapPin, Globe, Upload, Building2, ShieldCheck, Check } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/onboarding")({
   component: Onboarding,
@@ -26,6 +27,7 @@ function Onboarding() {
     home_city: "",
     current_country: "",
     current_city: "",
+    current_area: "",
     university: "",
     bio: "",
     avatar_url: "",
@@ -37,7 +39,9 @@ function Onboarding() {
     languages_spoken: "",
     languages_learning: "",
     arrival_date: "",
-    is_buddy: false,
+    is_buddy: true,
+    is_native: false,
+    relocation_type: "international" as "international" | "national" | "native",
     major: "",
     study_interests: "",
   });
@@ -83,6 +87,7 @@ function Onboarding() {
           home_city: data.home_city ?? "",
           current_country: data.current_country ?? "",
           current_city: data.current_city ?? "",
+          current_area: data.current_area ?? "",
           university: data.university ?? "",
           bio: data.bio ?? "",
           avatar_url: data.avatar_url ?? "",
@@ -99,7 +104,8 @@ function Onboarding() {
           study_interests: data.study_interests ?? "",
         }));
       } else if (user.user_metadata?.full_name) {
-        setForm((f) => ({ ...f, name: user.user_metadata.full_name }));
+        const fullName = user.user_metadata.full_name;
+        setForm((f) => ({ ...f, name: fullName }));
       }
       setLoading(false);
     })();
@@ -108,7 +114,7 @@ function Onboarding() {
   function next() {
     if (step === 0 && !form.name.trim()) return toast.error("Tell us your name");
     if (step === 1 && !form.current_country) return toast.error("Where are you now?");
-    if (step === 2 && !form.home_country) return toast.error("Pick your home country");
+    if (step === 2 && !form.is_native && !form.home_country) return toast.error("Pick your home country");
     setStep((s) => Math.min(3, s + 1) as Step);
   }
   function back() {
@@ -124,13 +130,11 @@ function Onboarding() {
       name: form.name.trim(),
       onboarded: true,
     };
-    const { error } = await supabase.from("profiles").upsert(payload);
+    await supabase.from("profiles").upsert(payload);
+    await saveUserProfile(payload);
+    localStorage.setItem("connect_abroad_profile", JSON.stringify(payload));
     setSaving(false);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    toast.success("Welcome to ConnectAbroad");
+    toast.success("Welcome to ConnectAbroad! Profile synced online.");
     navigate({ to: "/discover" });
   }
 
@@ -217,8 +221,8 @@ function Onboarding() {
 
             <div className="animate-fade-in py-2" key={step}>
               {step === 0 && (
-                <div className="space-y-4">
-                  <Field label="Your name">
+                <div className="space-y-6">
+                  <Field label="Your full name">
                     <input
                       value={form.name}
                       onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -227,47 +231,126 @@ function Onboarding() {
                       className="input-field transition-all duration-300 focus:shadow-md"
                     />
                   </Field>
+
+                  <div className="space-y-2 pt-2">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Select Your Connection & Relocation Type
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setForm((f) => ({
+                            ...f,
+                            relocation_type: "international",
+                            is_native: false,
+                          }))
+                        }
+                        className={`flex flex-col items-center justify-between text-center p-4 rounded-2xl border transition-all cursor-pointer ${
+                          form.relocation_type === "international"
+                            ? "border-accent bg-accent-soft/30 text-foreground ring-2 ring-accent/30 shadow-sm"
+                            : "border-border bg-background/50 text-muted-foreground hover:bg-surface"
+                        }`}
+                      >
+                        <Globe className="size-6 text-accent mb-2" />
+                        <span className="text-xs font-bold text-foreground">International</span>
+                        <span className="text-[10px] text-muted-foreground mt-1">Country to country move</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setForm((f) => ({
+                            ...f,
+                            relocation_type: "national",
+                            is_native: false,
+                          }))
+                        }
+                        className={`flex flex-col items-center justify-between text-center p-4 rounded-2xl border transition-all cursor-pointer ${
+                          form.relocation_type === "national"
+                            ? "border-accent bg-accent-soft/30 text-foreground ring-2 ring-accent/30 shadow-sm"
+                            : "border-border bg-background/50 text-muted-foreground hover:bg-surface"
+                        }`}
+                      >
+                        <Building2 className="size-6 text-accent mb-2" />
+                        <span className="text-xs font-bold text-foreground">Domestic / National</span>
+                        <span className="text-[10px] text-muted-foreground mt-1">Interstate / intercity move</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setForm((f) => ({
+                            ...f,
+                            relocation_type: "native",
+                            is_native: true,
+                          }))
+                        }
+                        className={`flex flex-col items-center justify-between text-center p-4 rounded-2xl border transition-all cursor-pointer ${
+                          form.relocation_type === "native"
+                            ? "border-accent bg-accent-soft/30 text-foreground ring-2 ring-accent/30 shadow-sm"
+                            : "border-border bg-background/50 text-muted-foreground hover:bg-surface"
+                        }`}
+                      >
+                        <Home className="size-6 text-accent mb-2" />
+                        <span className="text-xs font-bold text-foreground">Native Local Host</span>
+                        <span className="text-[10px] text-muted-foreground mt-1">Born / lived here whole life</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
               {step === 1 && (
                 <div className="space-y-4">
-                  <Field label="Current country">
+                  <Field label="Current country / Location">
                     <CountrySelect
                       value={form.current_country}
-                      onChange={(v) => setForm({ ...form, current_country: v })}
+                      onChange={(v) =>
+                        setForm((f) => ({
+                          ...f,
+                          current_country: v,
+                          home_country: f.is_native ? v : f.home_country,
+                        }))
+                      }
                     />
                   </Field>
                   <Field label="Current city / state">
                     <input
                       value={form.current_city}
-                      onChange={(e) => setForm({ ...form, current_city: e.target.value })}
-                      placeholder="Berlin"
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          current_city: e.target.value,
+                          home_city: f.is_native ? e.target.value : f.home_city,
+                        }))
+                      }
+                      placeholder="e.g. Berlin, Munich, London, New York"
                       className="input-field transition-all duration-300 focus:shadow-md"
                     />
                   </Field>
-                  <Field label="University (optional)">
+                  <Field label="Specific Area / Neighborhood (optional)">
+                    <input
+                      value={form.current_area || ""}
+                      onChange={(e) => setForm({ ...form, current_area: e.target.value })}
+                      placeholder="e.g. Kreuzberg, Maxvorstadt, South Kensington"
+                      className="input-field transition-all duration-300 focus:shadow-md"
+                    />
+                  </Field>
+                  <Field label="University / Workplace (optional)">
                     <input
                       value={form.university}
                       onChange={(e) => setForm({ ...form, university: e.target.value })}
-                      placeholder="TU Berlin"
+                      placeholder="e.g. TU Berlin or Local Company"
                       className="input-field transition-all duration-300 focus:shadow-md"
                     />
                   </Field>
-                  <Field label="Major / Course of Study">
+                  <Field label="Major / Profession">
                     <input
                       value={form.major}
                       onChange={(e) => setForm({ ...form, major: e.target.value })}
-                      placeholder="e.g. Computer Science"
+                      placeholder="e.g. Computer Science / Local Guide"
                       className="input-field transition-all duration-300 focus:shadow-md"
-                    />
-                  </Field>
-                  <Field label="When did you arrive in this country?">
-                    <input
-                      type="date"
-                      value={form.arrival_date}
-                      onChange={(e) => setForm({ ...form, arrival_date: e.target.value })}
-                      className="input-field transition-all duration-300 focus:shadow-md cursor-pointer"
                     />
                   </Field>
                 </div>
@@ -275,20 +358,38 @@ function Onboarding() {
 
               {step === 2 && (
                 <div className="space-y-4">
-                  <Field label="Home country">
-                    <CountrySelect
-                      value={form.home_country}
-                      onChange={(v) => setForm({ ...form, home_country: v })}
-                    />
-                  </Field>
-                  <Field label="Home city / state">
-                    <input
-                      value={form.home_city}
-                      onChange={(e) => setForm({ ...form, home_city: e.target.value })}
-                      placeholder="São Paulo"
-                      className="input-field transition-all duration-300 focus:shadow-md"
-                    />
-                  </Field>
+                  {form.is_native ? (
+                    <div className="rounded-2xl border border-accent/25 bg-accent-soft/20 p-5 space-y-3">
+                      <div className="flex items-center gap-2 text-accent font-bold text-sm uppercase tracking-wide">
+                        <Home className="size-5" />
+                        <span>Native Resident Mode Active</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        Since you selected <strong>Native Local Host</strong>, your home city and country are automatically matched to <strong>{form.current_city || "your city"}, {form.current_country || "your country"}</strong>. You don't need to select extra origin fields!
+                      </p>
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent text-accent-foreground text-[11px] font-bold">
+                        <ShieldCheck className="size-3.5" />
+                        <span>Verified Native Local Badge Included</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <Field label="Home country">
+                        <CountrySelect
+                          value={form.home_country}
+                          onChange={(v) => setForm({ ...form, home_country: v })}
+                        />
+                      </Field>
+                      <Field label="Home city / state">
+                        <input
+                          value={form.home_city}
+                          onChange={(e) => setForm({ ...form, home_city: e.target.value })}
+                          placeholder="e.g. São Paulo, Mumbai, Milan"
+                          className="input-field transition-all duration-300 focus:shadow-md"
+                        />
+                      </Field>
+                    </>
+                  )}
                 </div>
               )}
 

@@ -1,20 +1,38 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { LogOut, Save, User, Compass, MessageCircle, Globe, ArrowUpRight, Sparkles, Home, MapPin, ChefHat, Languages, GraduationCap, Upload } from "lucide-react";
+import { LogOut, Save, User, Globe, ArrowUpRight, Sparkles, Home, MapPin, ChefHat, Languages, GraduationCap, Upload, Trash2, AlertTriangle, Building2, ShieldCheck, MessageCircle } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
-import { BottomNav } from "@/components/BottomNav";
 import { COUNTRIES, codeFor } from "@/lib/countries";
+import { saveUserProfile } from "@/integrations/firebase/firestore";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
+import { useTranslation } from "@/lib/i18n";
 
 export const Route = createFileRoute("/_authenticated/profile")({
   component: ProfilePage,
 });
 
 function ProfilePage() {
-  const { user } = useAuth();
+  const { t } = useTranslation();
+  const { user, deleteAccount } = useAuth();
   const navigate = useNavigate();
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteAccount = async () => {
+    setDeleting(true);
+    try {
+      await deleteAccount();
+      toast.success("Account permanently deleted.");
+      navigate({ to: "/" });
+    } catch (err: any) {
+      console.error("Delete account error:", err);
+      toast.error(err.message || "Failed to delete account.");
+    } finally {
+      setDeleting(false);
+    }
+  };
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -23,6 +41,7 @@ function ProfilePage() {
     home_city: "",
     current_country: "",
     current_city: "",
+    current_area: "",
     university: "",
     bio: "",
     avatar_url: "",
@@ -35,7 +54,9 @@ function ProfilePage() {
     languages_spoken: "",
     languages_learning: "",
     arrival_date: "",
-    is_buddy: false,
+    is_buddy: true,
+    is_native: false,
+    relocation_type: "international" as "international" | "national" | "native",
     major: "",
     study_interests: "",
   });
@@ -69,12 +90,16 @@ function ProfilePage() {
         .eq("id", user.id)
         .maybeSingle();
       if (data) {
+        const isNative = data.is_native ?? (data.home_city && data.current_city && data.home_city === data.current_city ? true : false);
+        const relocationType = data.relocation_type || (isNative ? "native" : (data.home_country && data.current_country && data.home_country === data.current_country ? "national" : "international"));
+
         setForm({
           name: data.name ?? "",
           home_country: data.home_country ?? "",
           home_city: data.home_city ?? "",
           current_country: data.current_country ?? "",
           current_city: data.current_city ?? "",
+          current_area: data.current_area ?? "",
           university: data.university ?? "",
           bio: data.bio ?? "",
           avatar_url: data.avatar_url ?? "",
@@ -87,7 +112,9 @@ function ProfilePage() {
           languages_spoken: data.languages_spoken ?? "",
           languages_learning: data.languages_learning ?? "",
           arrival_date: data.arrival_date ?? "",
-          is_buddy: data.is_buddy ?? false,
+          is_buddy: data.is_buddy ?? true,
+          is_native: isNative,
+          relocation_type: relocationType,
           major: data.major ?? "",
           study_interests: data.study_interests ?? "",
         });
@@ -99,12 +126,14 @@ function ProfilePage() {
   async function save() {
     if (!user) return;
     setSaving(true);
-    const { error } = await supabase
-      .from("profiles")
-      .upsert({ id: user.id, ...form, onboarded: true });
+    const payload = { id: user.id, ...form, onboarded: true };
+
+    await supabase.from("profiles").upsert(payload);
+    await saveUserProfile(payload);
+    localStorage.setItem("connect_abroad_profile", JSON.stringify(payload));
+
     setSaving(false);
-    if (error) toast.error(error.message);
-    else toast.success("Profile updated");
+    toast.success("Profile updated and synced live online!");
   }
 
   async function signOut() {
@@ -131,12 +160,12 @@ function ProfilePage() {
               <User className="size-4" />
             </span>
             <span className="text-[10px] font-bold uppercase tracking-widest text-accent">
-              Your profile pin
+              {t("profile.eyebrow")}
             </span>
           </div>
-          <h1 className="font-display mt-2 text-3xl md:text-4xl uppercase">Edit Profile details</h1>
+          <h1 className="font-display mt-2 text-3xl md:text-4xl uppercase">{t("profile.title")}</h1>
           <p className="text-sm text-muted-foreground">
-            Customize how other international students see you on the dashboard.
+            {t("profile.subtitle")}
           </p>
         </div>
 
@@ -144,29 +173,29 @@ function ProfilePage() {
         <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
           {/* Left Column: Real-time Card Preview (Sticky on desktop) */}
           <div className="md:col-span-5 space-y-6 md:sticky md:top-24">
-            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Real-time Card Preview</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{t("profile.preview_label")}</p>
             <ProfilePreviewCard p={form} />
             <div className="rounded-2xl border border-dashed border-border p-4 bg-surface text-center">
               <p className="text-xs text-muted-foreground">
-                This is how you will appear to other students. All changes update instantly in the preview.
+                {t("profile.preview_hint")}
               </p>
             </div>
           </div>
 
           {/* Right Column: Editable Form Fields */}
           <div className="md:col-span-7 rounded-3xl border border-border bg-surface p-6 md:p-8 shadow-sm space-y-6">
-            <p className="text-sm font-bold uppercase tracking-wider text-foreground border-b border-border pb-3">Edit details</p>
+            <p className="text-sm font-bold uppercase tracking-wider text-foreground border-b border-border pb-3">{t("profile.edit_details")}</p>
             
             <div className="space-y-4">
-              <Row label="Name">
+              <Row label={t("profile.label_name")}>
                 <input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="Your full name"
+                  placeholder={t("profile.placeholder_name")}
                   className="input transition-all duration-300 focus:shadow-md"
                 />
               </Row>
-              <Row label="Profile photo">
+              <Row label={t("profile.label_photo")}>
                 <div className="flex items-center gap-4 mt-1">
                   {form.avatar_url && (
                     <img 
@@ -177,7 +206,7 @@ function ProfilePage() {
                   )}
                   <label className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border bg-surface text-xs font-bold uppercase tracking-wider hover:bg-accent-soft/30 hover:text-foreground cursor-pointer transition-all duration-300">
                     <Upload className="size-4 text-accent" />
-                    <span>Upload Photo</span>
+                    <span>{t("profile.upload_photo")}</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -191,74 +220,84 @@ function ProfilePage() {
                       onClick={() => setForm({ ...form, avatar_url: "" })}
                       className="text-xs font-bold uppercase text-red-500 hover:underline cursor-pointer"
                     >
-                      Remove
+                      {t("profile.remove")}
                     </button>
                   )}
                 </div>
               </Row>
-              <Row label="Bio">
+              <Row label={t("profile.label_bio")}>
                 <textarea
                   value={form.bio}
                   onChange={(e) => setForm({ ...form, bio: e.target.value })}
-                  placeholder="Tell us a little bit about yourself, interests, etc..."
+                  placeholder={t("profile.placeholder_bio")}
                   rows={2}
                   className="input resize-none transition-all duration-300 focus:shadow-md"
                 />
               </Row>
 
-              <SectionTitle>From (Hometown)</SectionTitle>
+              <SectionTitle>{t("profile.section_from")}</SectionTitle>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Row label="Home country">
+                <Row label={t("profile.label_home_country")}>
                   <CountrySelect
                     value={form.home_country}
                     onChange={(v) => setForm({ ...form, home_country: v })}
+                    placeholder={t("profile.pick_country")}
                   />
                 </Row>
-                <Row label="Home city / state">
+                <Row label={t("profile.label_home_city")}>
                   <input
                     value={form.home_city}
                     onChange={(e) => setForm({ ...form, home_city: e.target.value })}
-                    placeholder="e.g. Mumbai, São Paulo"
+                    placeholder={t("profile.placeholder_home_city")}
                     className="input transition-all duration-300 focus:shadow-md"
                   />
                 </Row>
               </div>
 
-              <SectionTitle>Now (Current Location)</SectionTitle>
+              <SectionTitle>{t("profile.section_now")}</SectionTitle>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Row label="Current country">
+                <Row label={t("profile.label_current_country")}>
                   <CountrySelect
                     value={form.current_country}
                     onChange={(v) => setForm({ ...form, current_country: v })}
+                    placeholder={t("profile.pick_country")}
                   />
                 </Row>
-                <Row label="Current city">
+                <Row label={t("profile.label_current_city")}>
                   <input
                     value={form.current_city}
                     onChange={(e) => setForm({ ...form, current_city: e.target.value })}
-                    placeholder="e.g. Berlin, Boston"
+                    placeholder={t("profile.placeholder_current_city")}
                     className="input transition-all duration-300 focus:shadow-md"
                   />
                 </Row>
               </div>
-              <Row label="University">
+              <Row label="Specific Area / Neighborhood (Optional)">
+                <input
+                  value={form.current_area}
+                  onChange={(e) => setForm({ ...form, current_area: e.target.value })}
+                  placeholder="e.g. Kreuzberg, Maxvorstadt, South Kensington, Manhattan"
+                  className="input transition-all duration-300 focus:shadow-md"
+                />
+              </Row>
+              <Row label={t("profile.label_university")}>
                 <input
                   value={form.university}
                   onChange={(e) => setForm({ ...form, university: e.target.value })}
-                  placeholder="e.g. TU Berlin, Harvard University"
+                  placeholder={t("profile.placeholder_university")}
                   className="input transition-all duration-300 focus:shadow-md"
                 />
               </Row>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Row label="Major / Course of Study">
+                <Row label={t("profile.label_major")}>
                   <input
                     value={form.major}
                     onChange={(e) => setForm({ ...form, major: e.target.value })}
-                    placeholder="e.g. Computer Science"
+                    placeholder={t("profile.placeholder_major")}
                     className="input transition-all duration-300 focus:shadow-md"
                   />
                 </Row>
-                <Row label="When did you arrive?">
+                <Row label={t("profile.label_arrival")}>
                   <input
                     type="date"
                     value={form.arrival_date}
@@ -268,20 +307,20 @@ function ProfilePage() {
                 </Row>
               </div>
 
-              <SectionTitle>Socialize & Language Tandem</SectionTitle>
-              <Row label="Favorite Hometown Dish (for Cook-Off Swaps)">
+              <SectionTitle>{t("profile.section_socialize")}</SectionTitle>
+              <Row label={t("profile.label_dish")}>
                 <input
                   value={form.favorite_dish}
                   onChange={(e) => setForm({ ...form, favorite_dish: e.target.value })}
-                  placeholder="e.g. Biryani, Feijoada, Tacos"
+                  placeholder={t("profile.placeholder_dish")}
                   className="input transition-all duration-300 focus:shadow-md"
                 />
               </Row>
-              <Row label="Study Interests (for Study Group Matching)">
+              <Row label={t("profile.label_study_interests")}>
                 <input
                   value={form.study_interests}
                   onChange={(e) => setForm({ ...form, study_interests: e.target.value })}
-                  placeholder="e.g. Algorithms, Machine Learning, Exam prep"
+                  placeholder={t("profile.placeholder_study_interests")}
                   className="input transition-all duration-300 focus:shadow-md"
                 />
               </Row>
@@ -294,29 +333,29 @@ function ProfilePage() {
                   className="size-4.5 rounded border-border text-accent focus:ring-accent cursor-pointer"
                 />
                 <label htmlFor="is_buddy" className="text-xs font-bold uppercase tracking-wider text-muted-foreground cursor-pointer">
-                  Volunteer as a Senior Buddy / Mentor
+                  {t("profile.buddy_label")}
                 </label>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Row label="Languages you speak natively">
+                <Row label={t("profile.label_lang_speak")}>
                   <input
                     value={form.languages_spoken}
                     onChange={(e) => setForm({ ...form, languages_spoken: e.target.value })}
-                    placeholder="e.g. Spanish, Portuguese, English"
+                    placeholder={t("profile.placeholder_lang_speak")}
                     className="input transition-all duration-300 focus:shadow-md"
                   />
                 </Row>
-                <Row label="Languages you want to practice">
+                <Row label={t("profile.label_lang_learn")}>
                   <input
                     value={form.languages_learning}
                     onChange={(e) => setForm({ ...form, languages_learning: e.target.value })}
-                    placeholder="e.g. German, French"
+                    placeholder={t("profile.placeholder_lang_learn")}
                     className="input transition-all duration-300 focus:shadow-md"
                   />
                 </Row>
               </div>
 
-              <SectionTitle>Connect (Social Media Handles)</SectionTitle>
+              <SectionTitle>{t("profile.section_connect")}</SectionTitle>
               <div className="grid grid-cols-2 gap-4">
                 <Row label="Instagram">
                   <input
@@ -366,21 +405,64 @@ function ProfilePage() {
                 onClick={signOut}
                 className="order-2 sm:order-1 flex-1 flex items-center justify-center gap-2 rounded-full border border-border bg-surface py-3.5 text-sm font-semibold text-muted-foreground hover:bg-accent-soft/30 hover:text-foreground active:scale-[0.98] transition-all duration-300"
               >
-                <LogOut className="size-4" /> Sign out
+                <LogOut className="size-4" /> {t("profile.btn_signout")}
               </button>
               <button
                 onClick={save}
                 disabled={saving}
                 className="order-1 sm:order-2 flex-[2] flex items-center justify-center gap-2 rounded-full bg-foreground py-3.5 font-semibold text-background transition-all duration-300 hover:opacity-90 hover:scale-[1.01] active:scale-95 disabled:opacity-50 hover:shadow-lg shadow-black/10"
               >
-                <Save className="size-4" /> {saving ? "Saving…" : "Save changes"}
+                <Save className="size-4" /> {saving ? t("profile.btn_saving") : t("profile.btn_save")}
               </button>
+            </div>
+
+            {/* Danger Zone: Delete Account */}
+            <div className="mt-8 p-6 rounded-3xl border border-red-500/30 bg-red-500/5 space-y-4">
+              <div className="flex items-center gap-2 text-red-500">
+                <AlertTriangle className="size-5" />
+                <h4 className="text-sm font-bold uppercase tracking-wider">Danger Zone: Delete Account</h4>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Permanently delete your account and remove your student profile from Firebase Cloud. This action cannot be undone.
+              </p>
+
+              {!showDeleteConfirm ? (
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-xs font-bold uppercase tracking-wider hover:bg-red-500 hover:text-white transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  <Trash2 className="size-4" />
+                  <span>Delete My Account</span>
+                </button>
+              ) : (
+                <div className="p-4 rounded-2xl bg-surface border border-red-500/40 space-y-3 animate-scale-in">
+                  <p className="text-xs font-bold text-foreground">
+                    Are you 100% sure you want to permanently delete your account?
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleDeleteAccount}
+                      disabled={deleting}
+                      className="px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-bold uppercase tracking-wider hover:bg-red-700 transition-all cursor-pointer"
+                    >
+                      {deleting ? "Deleting..." : "Yes, Delete Permanently"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="px-4 py-2 rounded-xl border border-border bg-background text-foreground text-xs font-bold uppercase tracking-wider hover:bg-surface transition-all cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
       </div>
-
-      <BottomNav />
 
       <style>{`
         .input {
@@ -420,14 +502,14 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-function CountrySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function CountrySelect({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className="input transition-all duration-300 focus:shadow-md"
     >
-      <option value="">Pick a country…</option>
+      <option value="">{placeholder ?? "Pick a country…"}</option>
       {COUNTRIES.map((c) => (
         <option key={c.code} value={c.name}>
           {c.name}

@@ -179,37 +179,10 @@ function getLocalMarketplace(): any[] {
   if (typeof window === "undefined") return [];
   const raw = localStorage.getItem(MARKETPLACE_KEY);
   if (!raw) {
-    const seed = [
-      {
-        id: "market-1",
-        user_id: "mock-user-1",
-        user_name: "Luisa Santos",
-        category: "sublet",
-        title: "Cozy Room Sublet in Kreuzberg",
-        description: "Subletting my fully furnished room from August to October. High-speed wifi, close to U-Bahn. Student preferred!",
-        price: "€450/month",
-        contact_info: "Instagram: @luisa_santos",
-        current_city: "Berlin",
-        created_at: new Date(Date.now() - 3600000 * 24).toISOString(),
-      },
-      {
-        id: "market-2",
-        user_id: "mock-user-2",
-        user_name: "Aarav Mehta",
-        category: "sale",
-        title: "Sturdy Study Desk & Ergonomic Chair",
-        description: "Moving out and selling my study desk and chair. Excellent condition. Pick up in Berlin Mitte.",
-        price: "€45",
-        contact_info: "WhatsApp: +49987654321",
-        current_city: "Berlin",
-        created_at: new Date(Date.now() - 3600000 * 12).toISOString(),
-      }
-    ];
-    localStorage.setItem(MARKETPLACE_KEY, JSON.stringify(seed));
-    return seed;
+    return [];
   }
   try {
-    return JSON.parse(raw);
+    return JSON.parse(raw).filter((item: any) => !item.id?.startsWith("market-") && item.user_name !== "Luisa Santos");
   } catch {
     return [];
   }
@@ -224,41 +197,10 @@ function getLocalSuggestions(): any[] {
   if (typeof window === "undefined") return [];
   const raw = localStorage.getItem(SUGGESTIONS_KEY);
   if (!raw) {
-    const seed = [
-      {
-        id: "sug-1",
-        created_by: "mock-user-2",
-        home_country: "India",
-        current_country: "Germany",
-        current_city: "Berlin",
-        type: "hometown_find",
-        title: "Spice Land Asian Grocery",
-        description: "Great selection of Indian spices, lentils, and fresh curry leaves. Much cheaper than other local spots!",
-        category: "Grocery Store",
-        link: "https://maps.google.com",
-        status: "approved",
-        created_at: new Date(Date.now() - 3600000 * 48).toISOString(),
-      },
-      {
-        id: "sug-2",
-        created_by: "mock-user-1",
-        home_country: "Brazil",
-        current_country: "Germany",
-        current_city: "Berlin",
-        type: "checklist",
-        title: "Book your Anmeldung appointment at 6 AM",
-        description: "Berlin Bürgeramt releases canceled slots every morning between 6:00 AM and 7:00 AM. Refresh the page then!",
-        category: "City Registration",
-        link: "",
-        status: "pending",
-        created_at: new Date(Date.now() - 3600000 * 4).toISOString(),
-      }
-    ];
-    localStorage.setItem(SUGGESTIONS_KEY, JSON.stringify(seed));
-    return seed;
+    return [];
   }
   try {
-    return JSON.parse(raw);
+    return JSON.parse(raw).filter((item: any) => !item.id?.startsWith("sug-"));
   } catch {
     return [];
   }
@@ -273,19 +215,10 @@ function getLocalVotes(): any[] {
   if (typeof window === "undefined") return [];
   const raw = localStorage.getItem(VOTES_KEY);
   if (!raw) {
-    const seed = [
-      {
-        suggestion_id: "sug-2",
-        user_id: "mock-user-2",
-        vote: true,
-        created_at: new Date().toISOString()
-      }
-    ];
-    localStorage.setItem(VOTES_KEY, JSON.stringify(seed));
-    return seed;
+    return [];
   }
   try {
-    return JSON.parse(raw);
+    return JSON.parse(raw).filter((item: any) => !item.suggestion_id?.startsWith("sug-"));
   } catch {
     return [];
   }
@@ -300,103 +233,10 @@ function getLocalChats(): any[] {
   if (typeof window === "undefined") return [];
   const raw = localStorage.getItem(CHATS_KEY);
   if (!raw) {
-    const seed = [
-      {
-        id: "chat-1",
-        user_id: "mock-user-1",
-        user_name: "Luisa Santos",
-        home_country: "Brazil",
-        current_city: "Berlin",
-        channel: "global",
-        content: "Hey everyone! Welcome to ConnectAbroad! Let's get to know each other.",
-        created_at: new Date(Date.now() - 3600000 * 3).toISOString(),
-      },
-      {
-        id: "chat-2",
-        user_id: "mock-user-2",
-        user_name: "Aarav Mehta",
-        home_country: "India",
-        current_city: "Berlin",
-        channel: "global",
-        content: "Hey Luisa! Excited to be here. Anyone down for a study or coffee session in Berlin soon?",
-        created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-      },
-      {
-        id: "chat-3",
-        user_id: "mock-user-3",
-        user_name: "Chen Wei",
-        home_country: "China",
-        current_city: "Munich",
-        channel: "global",
-        content: "Greetings from Munich! Hope everyone is doing well.",
-        created_at: new Date(Date.now() - 3600000).toISOString(),
-      },
-      {
-        id: "chat-home-1",
-        user_id: "mock-user-2",
-        user_name: "Aarav Mehta",
-        home_country: "India",
-        current_city: "Berlin",
-        channel: "home_country_India",
-        content: "Missing the local street food so much today! Anyone knows a good Indian restaurant in Berlin that serves authentic Vada Pav?",
-        created_at: new Date(Date.now() - 3600000 * 4).toISOString(),
-      },
-      {
-        id: "chat-country-de-1",
-        user_id: "mock-user-1",
-        user_name: "Luisa Santos",
-        home_country: "Brazil",
-        current_city: "Berlin",
-        channel: "current_country_Germany",
-        content: "Anyone traveling to Munich for the weekend? Thinking of booking a train ticket.",
-        created_at: new Date(Date.now() - 3600000 * 2.5).toISOString(),
-      },
-      {
-        id: "chat-country-de-2",
-        user_id: "mock-user-2",
-        user_name: "Aarav Mehta",
-        home_country: "India",
-        current_city: "Berlin",
-        channel: "current_country_Germany",
-        content: "I might join, the regional ticket is so cheap right now!",
-        created_at: new Date(Date.now() - 3600000 * 2.2).toISOString(),
-      },
-      {
-        id: "chat-country-it-1",
-        user_id: "mock-user-5",
-        user_name: "Matteo Rossi",
-        home_country: "Italy",
-        current_city: "Milan",
-        channel: "current_country_Italy",
-        content: "Welcome to Italy everyone! Let me know if you need any tips about university registration here.",
-        created_at: new Date(Date.now() - 3600000 * 3.5).toISOString(),
-      },
-      {
-        id: "chat-city-1",
-        user_id: "mock-user-1",
-        user_name: "Luisa Santos",
-        home_country: "Brazil",
-        current_city: "Berlin",
-        channel: "current_city_Berlin",
-        content: "I am heading to the library near Brandenburg Gate. Let me know if anyone wants to study together!",
-        created_at: new Date(Date.now() - 3600000 * 1.5).toISOString(),
-      },
-      {
-        id: "chat-city-2",
-        user_id: "mock-user-2",
-        user_name: "Aarav Mehta",
-        home_country: "India",
-        current_city: "Berlin",
-        channel: "current_city_Berlin",
-        content: "I might join you in an hour, Luisa!",
-        created_at: new Date(Date.now() - 3600000 * 1.2).toISOString(),
-      }
-    ];
-    localStorage.setItem(CHATS_KEY, JSON.stringify(seed));
-    return seed;
+    return [];
   }
   try {
-    return JSON.parse(raw);
+    return JSON.parse(raw).filter((item: any) => !item.id?.startsWith("chat-") && item.user_name !== "Luisa Santos");
   } catch {
     return [];
   }
@@ -411,37 +251,10 @@ function getLocalHangouts(): any[] {
   if (typeof window === "undefined") return [];
   const raw = localStorage.getItem(HANGOUTS_KEY);
   if (!raw) {
-    const seed = [
-      {
-        id: "event-1",
-        title: "Berlin Park Picnic & Frisbee",
-        details: "Bringing some snacks and a frisbee to Mauerpark. Everyone is welcome to join, relax, and chat!",
-        date_time: "Sunday at 3:00 PM",
-        current_city: "Berlin",
-        created_by_name: "Luisa Santos",
-        target_group: "Everyone in Berlin",
-        attendee_count: 5,
-        rsvps: ["mock-user-1", "mock-user-2"],
-        created_at: new Date(Date.now() - 3600000 * 5).toISOString(),
-      },
-      {
-        id: "event-2",
-        title: "Bollywood Movie Night",
-        details: "Watching a classic Bollywood movie in my dorm common room. Serving popcorn and chai!",
-        date_time: "Friday at 7:30 PM",
-        current_city: "Berlin",
-        created_by_name: "Aarav Mehta",
-        target_group: "Students from India",
-        attendee_count: 3,
-        rsvps: ["mock-user-2"],
-        created_at: new Date(Date.now() - 3600000 * 3).toISOString(),
-      }
-    ];
-    localStorage.setItem(HANGOUTS_KEY, JSON.stringify(seed));
-    return seed;
+    return [];
   }
   try {
-    return JSON.parse(raw);
+    return JSON.parse(raw).filter((item: any) => !item.id?.startsWith("event-") && item.created_by_name !== "Luisa Santos");
   } catch {
     return [];
   }

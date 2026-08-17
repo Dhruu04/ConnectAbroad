@@ -10,11 +10,14 @@ import {
 import { useEffect, type ReactNode } from "react";
 import { Toaster } from "sonner";
 
+import "../styles.css";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AuthProvider } from "@/lib/auth";
+import { I18nProvider } from "@/lib/i18n";
 import { supabase } from "@/integrations/supabase/client";
 import type { AuthChangeEvent } from "@supabase/supabase-js";
+import { ScrollToTop } from "@/components/ScrollToTop";
 
 function NotFoundComponent() {
   return (
@@ -115,6 +118,11 @@ function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: "window.__DEFINES__ = window.__DEFINES__ || {};",
+          }}
+        />
         <HeadContent />
       </head>
       <body>
@@ -139,11 +147,14 @@ function RootComponent() {
   }, [router, queryClient]);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <Outlet />
-        <Toaster position="top-center" richColors />
-      </AuthProvider>
-    </QueryClientProvider>
+    <I18nProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <Outlet />
+          <ScrollToTop />
+          <Toaster position="top-center" richColors />
+        </AuthProvider>
+      </QueryClientProvider>
+    </I18nProvider>
   );
 }
